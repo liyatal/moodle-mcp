@@ -11,14 +11,19 @@ wrapped as untrusted data, and downloads are size/time capped and confined to th
 The pure (network- and token-free) checks live in moodle_safety.py and are re-exported here.
 """
 
+import asyncio
+import contextlib
 import datetime as dt
+import functools
 import itertools
 import json
 import logging
+import math
 import os
 import re
 import sys
 import time
+import unicodedata
 from pathlib import Path
 from urllib.parse import unquote, urlencode, urlsplit
 
@@ -230,6 +235,9 @@ for _name in ("httpx", "httpcore"):  # their INFO logs contain request URLs
 _client = httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=False)
 _userid: int | None = None
 _preflight_ok: set[str] = set()
+_skip_warned: set[str] = set()  # MOODLE_SKIP_PREFLIGHT warning printed (once per process)
+PREFLIGHT_MAX_BYTES = 64 * 1024  # the preflight goes to a not yet verified host
+REST_MAX_BYTES = 10 * 1024 * 1024
 
 # fmt: off
 READ_FUNCTIONS = frozenset({
@@ -253,10 +261,12 @@ _FRIENDLY = {
 
 
 def friendly_error(errorcode, fallback) -> str:
-    code = clean_text(errorcode, 60) if errorcode else None
+    """Short message for a Moodle error code; scrubbed BEFORE truncation (no partial token)."""
+    code = clean_text(scrub(errorcode), 60) if errorcode else None
     if code in _FRIENDLY:
         return _FRIENDLY[code]
-    return f"Moodle error ({code or 'unknown'}): {scrub(clean_text(fallback, 300))}"
+    detail = clean_text(scrub(fallback), 300) if fallback is not None else ""
+    return f"Moodle error ({code or 'unknown'}): {detail}"
 
 
 def _error_from(out) -> MoodleError | None:
@@ -267,22 +277,28 @@ def _error_from(out) -> MoodleError | None:
     return None
 
 
-def _send(method: str, url: str, **kwargs) -> httpx.Response:
+def _send(method: str, url: str, max_bytes: int, **kwargs) -> bytes:
+    """One request through _client; returns the body, read with a hard byte cap."""
     try:
-        r = _client.request(method, url, **kwargs)
+        with _client.stream(method, url, **kwargs) as r:
+            if not r.is_success:
+                raise MoodleError(f"Moodle answered HTTP {r.status_code}.")
+            body = bytearray()
+            for chunk in r.iter_bytes():
+                body += chunk
+                if len(body) > max_bytes:
+                    raise MoodleError("Moodle's reply was too large.")
+            return bytes(body)
     except httpx.TimeoutException:
         raise MoodleError("Moodle did not answer in time (timeout).") from None
     except httpx.HTTPError as e:
         raise MoodleError(f"Could not reach Moodle ({type(e).__name__}).") from None
-    if not r.is_success:
-        raise MoodleError(f"Moodle answered HTTP {r.status_code}.")
-    return r
 
 
-def _json(r: httpx.Response):
+def _json(body: bytes):
     try:
-        return r.json()
-    except ValueError:
+        return json.loads(body)
+    except (ValueError, RecursionError):
         raise MoodleError("Moodle returned an invalid (non-JSON) response.") from None
 
 
@@ -301,41 +317,60 @@ def _flatten(obj, prefix=""):
     return flat
 
 
-def ensure_site_identity() -> None:
-    """Token-less check that the configured host really is that Moodle (once per base)."""
-    base = get_base()
-    if os.environ.get("MOODLE_SKIP_PREFLIGHT", "").strip() == "1" or base in _preflight_ok:
-        return
-    refuse = "Refusing to send your token: "
+def _public_config(base: str) -> dict:
+    """tool_mobile_get_public_config via the token-less nologin endpoint; returns its `data`."""
     body = [{"index": 0, "methodname": "tool_mobile_get_public_config", "args": {}}]
     url = f"{base}/lib/ajax/service-nologin.php?info=tool_mobile_get_public_config"
-    try:
-        out = _json(_send("POST", url, json=body))
-    except MoodleError as e:
-        raise MoodleError(refuse + f"could not verify the site ({e})") from None
+    out = _json(_send("POST", url, PREFLIGHT_MAX_BYTES, json=body))
     item = out[0] if isinstance(out, list) and out and isinstance(out[0], dict) else {}
     data = item.get("data") if not item.get("error", True) else None
     if not isinstance(data, dict):
-        raise MoodleError(refuse + "the site did not answer like a Moodle site.")
+        raise MoodleError("the site did not answer like a Moodle site.")
+    return data
+
+
+def _host_of(url) -> str | None:
+    try:
+        return urlsplit(url.strip()).hostname if isinstance(url, str) else None
+    except ValueError:  # hostile values: broken IPv6, NFKC tricks in the netloc ...
+        return None
+
+
+def ensure_site_identity() -> None:
+    """Token-less check that the configured host really is that Moodle (once per base)."""
+    base = get_base()
+    if os.environ.get("MOODLE_SKIP_PREFLIGHT", "").strip() == "1":
+        if not _skip_warned:
+            _skip_warned.add(base)
+            print("moodle-mcp: WARNING site identity preflight disabled", file=sys.stderr)
+        return
+    if base in _preflight_ok:
+        return
+    refuse = "Refusing to send your token: "
+    try:
+        data = _public_config(base)
+    except MoodleError as e:
+        raise MoodleError(refuse + f"could not verify the site ({e})") from None
     host = urlsplit(base).hostname
-    roots = [data.get(k) for k in ("wwwroot", "httpswwwroot")]
-    if not any(isinstance(r, str) and urlsplit(r.strip()).hostname == host for r in roots):
+    if not any(_host_of(data.get(k)) == host for k in ("wwwroot", "httpswwwroot")):
         raise MoodleError(refuse + f"the site does not identify itself as {host}.")
     _preflight_ok.add(base)
 
 
 def call(function: str, **params):
     """Call one allowlisted (read-only) Moodle web service function; returns parsed JSON."""
-    if not isinstance(function, str) or function not in READ_FUNCTIONS:
+    if type(function) is not str or function not in READ_FUNCTIONS:  # no str subclasses
         raise PermissionError(f"{function!r} is not an allowed read-only Moodle function")
     flat = _flatten(params)
     if _RESERVED_PARAMS & (set(params) | set(flat)):
         raise ValueError("wstoken, wsfunction and moodlewsrestformat cannot be passed as params")
-    base, tok = get_base(), token()
-    if function != "tool_mobile_get_public_config":
-        ensure_site_identity()
+    base = get_base()
+    if function == "tool_mobile_get_public_config":
+        return _public_config(base)  # public: never send the token to an unverified host
+    tok = token()
+    ensure_site_identity()
     data = {**flat, "wstoken": tok, "wsfunction": function, "moodlewsrestformat": "json"}
-    out = _json(_send("POST", f"{base}/webservice/rest/server.php", data=data))
+    out = _json(_send("POST", f"{base}/webservice/rest/server.php", REST_MAX_BYTES, data=data))
     err = _error_from(out)
     if err:
         raise err
@@ -345,7 +380,8 @@ def call(function: str, **params):
 def userid() -> int:
     global _userid
     if _userid is None:
-        uid = (call("core_webservice_get_site_info") or {}).get("userid")
+        info = call("core_webservice_get_site_info")
+        uid = info.get("userid") if isinstance(info, dict) else None
         if not isinstance(uid, int) or isinstance(uid, bool):
             raise MoodleError("Moodle did not return a user id.")
         _userid = uid
@@ -362,8 +398,25 @@ def fmt_time(ts):
 
 
 # ============================================================================================
-# 4. Tools (thin wrappers; every third-party string is wrapped with untrusted())
+# 4. Tools (thin wrappers; every third-party string is wrapped or validated)
 # ============================================================================================
+
+MAX_MODULES_TOTAL = 300  # course_contents budget over all sections
+MAX_FILES_TOTAL = 300
+_WORD_RE = re.compile(r"[A-Za-z0-9_ -]{1,30}")
+_URL_BAD = frozenset('<>"`{}|\\^')
+
+
+def _tool(fn):
+    """Register `fn` with FastMCP as an async tool that runs in a worker thread (so a slow
+    Moodle never blocks the stdio event loop); return the plain sync function unchanged."""
+
+    @functools.wraps(fn)
+    async def in_thread(*args, **kwargs):
+        return await asyncio.to_thread(fn, *args, **kwargs)
+
+    mcp.tool()(in_thread)
+    return fn
 
 
 def _int_arg(value, name: str, lo: int, hi: int | None = None) -> int:
@@ -378,12 +431,47 @@ def _dicts(seq) -> list[dict]:
     return [x for x in seq if isinstance(x, dict)] if isinstance(seq, list) else []
 
 
+def _sub(d: dict, key: str) -> dict:
+    """d[key] if it is a dict, else {} (Moodle fields may be null)."""
+    v = d.get(key)
+    return v if isinstance(v, dict) else {}
+
+
+def _int(v) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _num(v) -> int | float | None:
+    ok = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+    return v if ok else None
+
+
+def _word(v) -> str | None:
+    """Short machine words from Moodle (module type, submission status) or None."""
+    return v if isinstance(v, str) and _WORD_RE.fullmatch(v) else None
+
+
+def _link(v) -> str | None:
+    """A URL as given (never truncated) or None if long or containing odd characters."""
+    if not isinstance(v, str) or len(v) > 2000:
+        return None
+    bad = any(c in _URL_BAD or c.isspace() or unicodedata.category(c)[0] == "C" for c in v)
+    return None if bad else v
+
+
+def _capped(items: list, total: int) -> list:
+    """Append one visible marker when a cap cut the list."""
+    if total > len(items):
+        items.append({"truncated": f"{len(items)} of {total} shown"})
+    return items
+
+
 def _file(f: dict) -> dict:
     name = untrusted(f.get("filename"), "file.filename", limit=MAX_NAME)
-    return {"filename": name, "fileurl": f.get("fileurl")}
+    return {"filename": name, "fileurl": _link(f.get("fileurl"))}
 
 
-@mcp.tool()
+@_tool
 def list_courses(include_past: bool = False) -> list[dict]:
     """List the courses I'm enrolled in (current by default)."""
     now = time.time()
@@ -395,48 +483,59 @@ def list_courses(include_past: bool = False) -> list[dict]:
             continue
         out.append(
             {
-                "id": c.get("id"),
+                "id": _int(c.get("id")),
                 "name": untrusted(c.get("fullname"), "course.name", limit=MAX_NAME),
                 "shortname": untrusted(c.get("shortname"), "course.shortname", limit=MAX_NAME),
-                "progress": c.get("progress"),
+                "progress": _num(c.get("progress")),
                 "ended": ended,
             }
         )
-    return out[:MAX_ITEMS]
+    return _capped(out[:MAX_ITEMS], len(out))
 
 
-@mcp.tool()
+@_tool
 def course_contents(course_id: int) -> list[dict]:
     """Sections, activities and files of a course."""
     _int_arg(course_id, "course_id", 1)
-    out = []
-    for s in _dicts(call("core_course_get_contents", courseid=course_id))[:MAX_ITEMS]:
+    sections = _dicts(call("core_course_get_contents", courseid=course_id))
+    out, mods_left, files_left = [], MAX_MODULES_TOTAL, MAX_FILES_TOTAL
+    for s in sections[:MAX_ITEMS]:
+        if mods_left <= 0:
+            break
+        modules = _dicts(s.get("modules"))
         mods = []
-        for m in _dicts(s.get("modules"))[:MAX_ITEMS]:
+        for m in modules[: min(MAX_ITEMS, mods_left)]:
             files = [f for f in _dicts(m.get("contents")) if f.get("type") == "file"]
+            shown = files[: min(MAX_ITEMS, files_left)]
+            files_left -= len(shown)
+            entries = [
+                {
+                    **_file(f),
+                    "size": _num(f.get("filesize")),
+                    "modified": fmt_time(f.get("timemodified")),
+                }
+                for f in shown
+            ]
             mods.append(
                 {
-                    "id": m.get("id"),
+                    "id": _int(m.get("id")),
                     "name": untrusted(m.get("name"), "module.name", limit=MAX_NAME),
-                    "type": m.get("modname"),
-                    "url": m.get("url"),
-                    "files": [
-                        {
-                            **_file(f),
-                            "size": f.get("filesize"),
-                            "modified": fmt_time(f.get("timemodified")),
-                        }
-                        for f in files[:MAX_ITEMS]
-                    ],
+                    "type": _word(m.get("modname")),
+                    "url": _link(m.get("url")),
+                    "files": _capped(entries, len(files)),
                 }
             )
+        mods_left -= len(mods)
         out.append(
-            {"section": untrusted(s.get("name"), "section.name", limit=MAX_NAME), "modules": mods}
+            {
+                "section": untrusted(s.get("name"), "section.name", limit=MAX_NAME),
+                "modules": _capped(mods, len(modules)),
+            }
         )
-    return out
+    return _capped(out, len(sections))
 
 
-@mcp.tool()
+@_tool
 def upcoming_deadlines(days: int = 14) -> list[dict]:
     """Upcoming deadlines / action events (assignments, quizzes...) in the next N days."""
     _int_arg(days, "days", 1, 365)
@@ -447,86 +546,93 @@ def upcoming_deadlines(days: int = 14) -> list[dict]:
         timesortto=now + days * 86400,
         limitnum=MAX_ITEMS,
     )
-    events = _dicts((res or {}).get("events") if isinstance(res, dict) else None)
-    return [
+    events = _dicts(res.get("events") if isinstance(res, dict) else None)
+    out = [
         {
             "name": untrusted(e.get("name"), "event.name", limit=MAX_NAME),
-            "course": untrusted(
-                (e.get("course") or {}).get("fullname"), "event.course", limit=MAX_NAME
-            ),
+            "course": untrusted(_sub(e, "course").get("fullname"), "event.course", limit=MAX_NAME),
             "due": fmt_time(e.get("timesort")),
-            "type": e.get("modulename"),
-            "url": e.get("url"),
+            "type": _word(e.get("modulename")),
+            "url": _link(e.get("url")),
         }
         for e in events[:MAX_ITEMS]
     ]
+    return _capped(out, len(events))
 
 
-@mcp.tool()
+@_tool
 def assignments(course_id: int) -> list[dict]:
     """Assignments of a course with due dates, my submission status and attached files."""
     _int_arg(course_id, "course_id", 1)
     res = call("mod_assign_get_assignments", courseids=[course_id])
-    items = [a for c in _dicts((res or {}).get("courses")) for a in _dicts(c.get("assignments"))]
+    res = res if isinstance(res, dict) else {}
+    items = [a for c in _dicts(res.get("courses")) for a in _dicts(c.get("assignments"))]
     out, status_calls, failures_in_a_row = [], 0, 0
     for a in items[:MAX_ITEMS]:
         status = None
         # breaker: after 3 consecutive non-auth failures stop asking (don't wait out 25 timeouts)
-        if status_calls < MAX_ASSIGN_STATUS_CALLS and failures_in_a_row < 3 and a.get("id"):
+        if status_calls < MAX_ASSIGN_STATUS_CALLS and failures_in_a_row < 3 and _int(a.get("id")):
             status_calls += 1
             try:
                 st = call("mod_assign_get_submission_status", assignid=a.get("id"))
                 st = st if isinstance(st, dict) else {}
-                sub = ((st.get("lastattempt") or {}).get("submission") or {}).get("status")
-                status = sub if isinstance(sub, str) else None
+                status = _word(_sub(_sub(st, "lastattempt"), "submission").get("status"))
                 failures_in_a_row = 0
             except MoodleError as e:
                 if e.errorcode in _AUTH_ERRORS:
                     raise
                 failures_in_a_row += 1  # this assignment only: status stays None
+        attachments = _dicts(a.get("introattachments"))
         out.append(
             {
-                "id": a.get("id"),
+                "id": _int(a.get("id")),
                 "name": untrusted(a.get("name"), "assignment.name", limit=MAX_NAME),
                 "due": fmt_time(a.get("duedate")),
                 "cutoff": fmt_time(a.get("cutoffdate")),
                 "submission_status": status,
-                "files": [_file(f) for f in _dicts(a.get("introattachments"))[:MAX_ITEMS]],
+                "files": _capped([_file(f) for f in attachments[:MAX_ITEMS]], len(attachments)),
             }
         )
-    return out
+    return _capped(out, len(items))
 
 
-@mcp.tool()
+@_tool
 def grades(course_id: int) -> list[dict]:
     """My grade items in a course."""
     _int_arg(course_id, "course_id", 1)
     res = call("gradereport_user_get_grade_items", courseid=course_id, userid=userid())
-    items = [i for g in _dicts((res or {}).get("usergrades")) for i in _dicts(g.get("gradeitems"))]
-    return [
+    res = res if isinstance(res, dict) else {}
+    items = [i for g in _dicts(res.get("usergrades")) for i in _dicts(g.get("gradeitems"))]
+    out = [
         {
             "item": untrusted(i.get("itemname") or "Course total", "grade.item", limit=MAX_NAME),
-            "grade": i.get("gradeformatted"),
-            "range": i.get("rangeformatted"),
-            "percentage": i.get("percentageformatted"),
+            "grade": untrusted(i.get("gradeformatted"), "grade.grade", limit=MAX_NAME),
+            "range": untrusted(i.get("rangeformatted"), "grade.range", limit=MAX_NAME),
+            "percentage": untrusted(
+                i.get("percentageformatted"), "grade.percentage", limit=MAX_NAME
+            ),
         }
         for i in items[:MAX_ITEMS]
     ]
+    return _capped(out, len(items))
 
 
-@mcp.tool()
+@_tool
 def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
     """Latest discussions in a course's forums (announcements included)."""
     _int_arg(course_id, "course_id", 1)
     _int_arg(limit, "limit", 1, 50)
-    out = []
-    for f in _dicts(call("mod_forum_get_forums_by_courses", courseids=[course_id]))[:MAX_FORUMS]:
+    forums = _dicts(call("mod_forum_get_forums_by_courses", courseids=[course_id]))
+    out, unread_forums = [], len(forums) > MAX_FORUMS
+    for f in forums[:MAX_FORUMS]:
         if len(out) >= MAX_ITEMS:
+            unread_forums = True
             break
         res = call(
             "mod_forum_get_forum_discussions", forumid=f.get("id"), perpage=limit, sortorder=1
         )  # newest first
-        for d in _dicts((res or {}).get("discussions"))[:limit]:
+        res = res if isinstance(res, dict) else {}
+        for d in _dicts(res.get("discussions"))[:limit]:
             out.append(
                 {
                     "forum": untrusted(f.get("name"), "forum.name", limit=MAX_NAME),
@@ -536,7 +642,14 @@ def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
                     "message": untrusted(d.get("message") or "", "forum.message", html=True),
                 }
             )
-    return out[:MAX_ITEMS]
+    shown = out[:MAX_ITEMS]
+    if unread_forums:  # forums past the cap were not read, so the total is a lower bound
+        shown.append({"truncated": f"{len(shown)} of {len(out)}+ shown"})
+        return shown
+    return _capped(shown, len(out))
+
+
+_SAVE_ERROR = "Could not save the file (disk or path problem)."
 
 
 def _open_new(folder: Path, name: str):
@@ -556,7 +669,7 @@ def _json_download_error(head: bytes) -> MoodleError | None:
     """The Moodle error in a JSON download reply, or None if it is a genuine .json file."""
     try:
         out = json.loads(head)
-    except ValueError:  # not JSON (or cut at 64 KiB): treat as file content
+    except (ValueError, RecursionError):  # not JSON (or cut at 64 KiB): treat as file content
         return None
     err = _error_from(out)
     if err is None and isinstance(out, dict) and isinstance(out.get("error"), str):
@@ -564,7 +677,7 @@ def _json_download_error(head: bytes) -> MoodleError | None:
     return err
 
 
-@mcp.tool()
+@_tool
 def download_file(fileurl: str, subfolder: str = "") -> str:
     """Save a course file (fileurl from course_contents / assignments) in the downloads folder."""
     base = get_base()
@@ -582,6 +695,8 @@ def download_file(fileurl: str, subfolder: str = "") -> str:
     else:
         req = _client.stream("POST", url, data={"token": tok}, follow_redirects=False)
     deadline = time.monotonic() + DOWNLOAD_DEADLINE_S
+    too_big = MoodleError(f"File is larger than the {cap // 1048576} MB download limit.")
+    too_slow = MoodleError(f"Download took over {DOWNLOAD_DEADLINE_S} s.")
     try:
         with req as r:
             if not 200 <= r.status_code < 300:
@@ -590,6 +705,10 @@ def download_file(fileurl: str, subfolder: str = "") -> str:
             if "application/json" in r.headers.get("content-type", "").lower():
                 for chunk in chunks:  # peek: a Moodle error, or a genuine .json file?
                     head += chunk
+                    if len(head) > cap:
+                        raise too_big
+                    if time.monotonic() > deadline:
+                        raise too_slow
                     if len(head) > 65536:
                         break
                 err = _json_download_error(head)
@@ -597,9 +716,12 @@ def download_file(fileurl: str, subfolder: str = "") -> str:
                     raise err
             declared = r.headers.get("content-length", "")
             if declared.isdigit() and int(declared) > cap:
-                raise MoodleError(f"File is larger than the {cap // 1048576} MB download limit.")
-            target.mkdir(parents=True, exist_ok=True)
-            path, fh = _open_new(target, name)
+                raise too_big
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+                path, fh = _open_new(target, name)
+            except OSError:
+                raise MoodleError(_SAVE_ERROR) from None
             try:
                 with fh:
                     if not path.resolve().is_relative_to(root):
@@ -608,14 +730,15 @@ def download_file(fileurl: str, subfolder: str = "") -> str:
                     for chunk in itertools.chain([head], chunks):
                         size += len(chunk)
                         if size > cap:
-                            raise MoodleError(
-                                f"File is larger than the {cap // 1048576} MB download limit."
-                            )
+                            raise too_big
                         if time.monotonic() > deadline:
-                            raise MoodleError(f"Download took over {DOWNLOAD_DEADLINE_S} s.")
+                            raise too_slow
                         fh.write(chunk)
-            except BaseException:
-                path.unlink(missing_ok=True)
+            except BaseException as e:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+                if isinstance(e, OSError):
+                    raise MoodleError(_SAVE_ERROR) from None
                 raise
     except httpx.TimeoutException:
         raise MoodleError("Download timed out.") from None
@@ -627,6 +750,8 @@ def download_file(fileurl: str, subfolder: str = "") -> str:
 # ============================================================================================
 # 5. CLI
 # ============================================================================================
+
+USAGE = "usage: moodle_mcp.py [--sites | --doctor]   (no argument: run the MCP server on stdio)"
 
 
 def _doctor() -> int:
@@ -677,8 +802,8 @@ def _doctor() -> int:
         say("FAIL", f"web service call failed: {e}")
         return summary()
     names = [f.get("name") for f in _dicts(info.get("functions"))]
-    names = [n for n in names if isinstance(n, str) and re.fullmatch(r"[a-z0-9_]{1,100}", n)]
-    release = clean_text(info.get("release") or "unknown version", 60)
+    names = [n for n in names if isinstance(n, str) and re.fullmatch(r"[A-Za-z0-9_]{1,100}", n)]
+    release = clean_text(scrub(info.get("release") or "unknown version"), 60)
     say("OK", f"web service works: host {host}, Moodle {release}, {len(names)} functions available")
     writes = sorted(n for n in names if is_write_function(n))
     if writes:
@@ -695,6 +820,9 @@ def _doctor() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
+    if any(a not in ("--sites", "--doctor") for a in args):
+        print(USAGE, file=sys.stderr)
+        return 2
     if "--sites" in args:
         for key, (name, url) in SITES.items():
             print(f"{key:11} {name:45} {url}")
