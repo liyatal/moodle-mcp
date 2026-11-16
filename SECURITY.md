@@ -35,9 +35,20 @@ The token is the Moodle mobile web service token. It carries whatever the Moodle
 | Preflight identity check | Before the first token use, asks the site (no token) for its public config and requires its reported address to match the configured host | Weak against a determined impostor, who can fake that response. It catches stale hosts and honest mistakes, not a hostile server |
 | Token in the POST body | Token never appears in a URL, so it doesn't land in logs or error text | Downloads rely on Moodle accepting the token in the body (checked in Moodle's source, not yet verified live). `MOODLE_DOWNLOAD_TOKEN_IN_QUERY=1` is a fallback and puts the token in the URL |
 | Scrubbing and quiet logging | Token patterns are removed from error messages; HTTP client logging is silenced | Best effort; a new code path could leak, which is why tests cover it |
-| Untrusted-content wrapping | Moodle text is wrapped in `<untrusted_moodle_content>` tags, stripped of control, zero-width and bidi characters, stripped of hidden HTML, and length-limited. The server tells the assistant that this text is data, not instructions | **Mitigation, not a fix.** The assistant may still be influenced. Prompt injection is reduced, not eliminated |
-| Download hardening | Only the configured host and path prefix, no redirects, safe file names, no overwrite, no escape from the download folder, size cap (`MOODLE_MAX_DOWNLOAD_MB`) | Downloaded files are untrusted content; the server does not scan them |
-| Result limits | Caps on items, text length and number of calls per tool | Limits blast radius, not intent |
+| Untrusted-content wrapping | Moodle text is fenced in `<untrusted_moodle_content>` tags, NFKC-normalised, stripped of control, zero-width, bidi and other invisible characters, and length-limited; fake fence tags inside it are neutralised. Forum HTML is stripped, links are kept as `text (url)`, hidden elements and scripts are dropped. The server tells the assistant that this text is data, not instructions | **Mitigation, not a fix.** The assistant may still be influenced. Prompt injection is reduced, not eliminated. Known gap: misnested HTML end tags inside a hidden element can still leak hidden text (it stays inside the fence) |
+| Download hardening | Only the configured host and path prefix, no redirects, safe file names (capped at 240 UTF-8 bytes), `;` and double-encoded dots in the path refused, no overwrite, no escape from the download folder, size cap (`MOODLE_MAX_DOWNLOAD_MB`), 120 s deadline. JSON files can be downloaded; a Moodle error reply is told apart from a genuine `.json` file | Downloaded files are untrusted content; the server does not scan them |
+| Response size caps | REST replies are capped at 10 MiB, the identity preflight at 64 KiB | Limits memory abuse by a hostile host, nothing more |
+| Token-less public config | The public-config call (`tool_mobile_get_public_config`) never sends the token | Only protects that one call |
+| Result limits | Caps on items, text length and number of calls per tool. A capped list ends with `{"truncated": "N of M shown"}`; ask for a narrower query (e.g. one course) | Limits blast radius, not intent |
+| Worker threads | Tools run in worker threads, so a slow Moodle or download cannot freeze the server | Availability only |
+
+## Code layout
+
+The pure checks (URL validation, text cleaning and fencing, download URL and file name checks, `is_write_function`) live in `moodle_safety.py`, which has no network, token or environment access. `moodle_mcp.py` imports and re-exports them. Installing clones the whole repository, so users notice nothing.
+
+Tests: about 1000 offline tests (`pytest`), including a red-team file of attack cases; lint with `ruff check .`.
+
+CLI notes: an unknown argument exits with code 2 and a usage line. `MOODLE_SKIP_PREFLIGHT=1` disables the identity check and prints a one-time warning on stderr (`--doctor` also warns).
 
 ## Token storage
 

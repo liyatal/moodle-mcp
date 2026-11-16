@@ -47,7 +47,9 @@ Claude יציג לכם קודם את הפקודות, יבקש שתאשרו את 
 | `assignments` | תאריכי הגשה, סטטוס ההגשה שלכם וקבצים מצורפים |
 | `grades` | הציונים שלכם בקורס |
 | `forum_discussions` | הודעות אחרונות בפורומים ובלוח ההודעות |
-| `download_file` | שמירת קובץ מהקורס ל-`~/Downloads/moodle` |
+| `download_file` | שמירת קובץ מהקורס ל-`~/Downloads/moodle` (גם קבצי JSON) |
+
+רשימות ארוכות נחתכות (עד 50 פריטים), ובסוף הרשימה מופיע פריט `{"truncated": "N of M shown"}`. כשרואים אותו, מבקשים שאילתה צרה יותר, למשל קורס אחד. הכלים רצים ב-thread נפרד, כך שהורדה איטית לא מקפיאה את Claude.
 
 ## 🚀 התקנה ידנית
 
@@ -203,7 +205,7 @@ $env:MOODLE_SITE = "tau"; .venv\Scripts\python moodle_mcp.py --doctor
 - שה-token עובד.
 - אילו פונקציות כתיבה ה-token שלכם מאפשר. זו אזהרה ולא תקלה, ראו [אבטחה](#-אבטחה).
 
-הוא מדפיס רק את שם האתר, גרסת Moodle ומספר הפונקציות. הוא **לא** מדפיס את ה-token, את שמכם, מספרי זהות או נתוני קורסים. הפלט נגמר בשורת סיכום (`doctor: N ok, M warn, K fail`), ואם יש `FAIL` הוא יוצא עם קוד שגיאה. שימו לב שהוא כן שולח בקשות אמיתיות ל-Moodle.
+הוא מדפיס רק את שם האתר, גרסת Moodle ומספר הפונקציות. הוא **לא** מדפיס את ה-token, את שמכם, מספרי זהות או נתוני קורסים. הפלט נגמר בשורת סיכום (`doctor: N ok, M warn, K fail`), ואם יש `FAIL` הוא יוצא עם קוד שגיאה. שימו לב שהוא כן שולח בקשות אמיתיות ל-Moodle. ארגומנט לא מוכר (למשל `--help`) מחזיר קוד יציאה 2 ושורת שימוש.
 
 ## 🏫 בוחרים מוסד
 
@@ -238,7 +240,7 @@ $env:MOODLE_SITE = "tau"; .venv\Scripts\python moodle_mcp.py --doctor
 | `MOODLE_TOKEN_FILE` | `.token` ליד הסקריפט | מאיפה לקרוא את ה-token |
 | `MOODLE_DOWNLOAD_DIR` | `~/Downloads/moodle` | לאן נשמרות ההורדות |
 | `MOODLE_MAX_DOWNLOAD_MB` | `100` | תקרת גודל להורדה אחת. הורדה גדולה יותר נעצרת והקובץ החלקי נמחק |
-| `MOODLE_SKIP_PREFLIGHT` | כבוי | `1` מכבה את בדיקת הזהות של האתר לפני שליחת ה-token. רק אם האתר חוסם אותה, ועל אחריותכם |
+| `MOODLE_SKIP_PREFLIGHT` | כבוי | `1` מכבה את בדיקת הזהות של האתר לפני שליחת ה-token (והשרת מדפיס אזהרה ל-stderr). רק אם האתר חוסם אותה, ועל אחריותכם |
 | `MOODLE_DOWNLOAD_TOKEN_IN_QUERY` | כבוי | `1` שולח את ה-token בכתובת ההורדה במקום בגוף הבקשה. רק אם אתר מסרב להורדה הרגילה. פחות בטוח |
 
 ## 🔒 אבטחה
@@ -248,13 +250,15 @@ $env:MOODLE_SITE = "tau"; .venv\Scripts\python moodle_mcp.py --doctor
 **מה מוגן:**
 
 - ה-token נשלח רק בגוף בקשת POST (לא בכתובת), רק ל-https של האתר שהגדרתם, ורק אחרי שהאתר זיהה את עצמו כאותה כתובת.
-- הורדות נחסמות לכל כתובת מחוץ לאתר, לא יוצאות מתיקיית ההורדות, לא דורסות קבצים וחסומות בגודל.
+- הורדות נחסמות לכל כתובת מחוץ לאתר, לא יוצאות מתיקיית ההורדות, לא דורסות קבצים וחסומות בגודל. שמות קבצים נחתכים ל-240 בייטים, ונתיבים עם `;` או נקודות מקודדות פעמיים נדחים.
+- תשובות מ-Moodle מוגבלות בגודל (10MiB ל-API, 64KiB לבדיקת הזהות), ובקשת הקונפיגורציה הציבורית אף פעם לא כוללת את ה-token.
 - ה-token מוסתר מהודעות שגיאה ומהלוגים.
-- טקסט שמגיע מ-Moodle (פורומים, שמות קורסים וקבצים) מסומן ל-Claude כתוכן לא מהימן, מנוקה מתווים נסתרים ומוגבל באורך.
+- טקסט שמגיע מ-Moodle (פורומים, שמות קורסים וקבצים) נכנס למעטפת `<untrusted_moodle_content>` שמסומנת ל-Claude כתוכן לא מהימן. הוא מנורמל (NFKC), מנוקה מתווים נסתרים, מוגבל באורך, ותגיות מעטפת מזויפות בתוכו מנוטרלות.
+- בהודעות פורום ה-HTML מוסר, קישורים נשמרים בצורת `טקסט (כתובת)`, וטקסט מוסתר נזרק.
 
 **מה לא מוגן:**
 
-- **Prompt injection מצטמצם ולא נעלם.** מי שיכול לכתוב בפורום שאתם קוראים יכול לנסות לתת הוראות ל-Claude. הסימון מקשה על כך, אבל לא מבטל את הסיכון.
+- **Prompt injection מצטמצם ולא נעלם.** מי שיכול לכתוב בפורום שאתם קוראים יכול לנסות לתת הוראות ל-Claude. הסימון מקשה על כך, אבל לא מבטל את הסיכון. מגבלה ידועה: תגיות סגירה של HTML משובש בתוך אלמנט מוסתר עלולות להדליף טקסט מוסתר (הוא עדיין נשאר בתוך המעטפת).
 - ה-token שמור בטקסט גלוי בדיסק. בוינדוס ההגנה היא שורת ה-`icacls` שלמעלה.
 - מי שמריץ קוד על המחשב שלכם, או אתר Moodle שנפרץ, מחוץ להגנה.
 - בדיקת הזהות של האתר חלשה מול מתחזה נחוש.
@@ -277,6 +281,10 @@ python scripts/check_sites.py   # yearly check that institution hosts are live (
 <div dir="rtl">
 
 ברשימה `SITES` יש כתובות עם שנה בשם (`moodle26`, `moodle27`), ולכן כדאי להריץ את `scripts/check_sites.py` פעם בשנה.
+
+מבנה הקוד: `moodle_mcp.py` הוא השרת, ו-`moodle_safety.py` מחזיק את הבדיקות הטהורות (אימות כתובות, ניקוי ומעטפת לטקסט, בדיקת כתובות ושמות קבצים להורדה, זיהוי פונקציות כתיבה), בלי רשת, token או משתני סביבה. `moodle_mcp` מייבא ממנו ומייצא אותו מחדש. ההתקנה משכפלת את כל המאגר, כך שבשבילכם דבר לא משתנה.
+
+חבילת הבדיקות כוללת כאלף בדיקות, כולן offline (בלי רשת ובלי token אמיתי), וביניהן קובץ red-team עם תקיפות לדוגמה. מריצים אותן עם `pytest`, ואת הלינטר עם `ruff check .`.
 
 </div>
 
@@ -365,7 +373,9 @@ MOODLE_SITE=tau .venv/bin/python moodle_mcp.py --doctor
 $env:MOODLE_SITE = "tau"; .venv\Scripts\python moodle_mcp.py --doctor
 ```
 
-`--doctor` checks, in order: the base URL is valid and https; a token exists and has the right format (on macOS/Linux, that the file isn't readable by others); the site identifies itself as the Moodle you configured; the token works; and which write-capable functions your token grants (a warning, not a failure — see [Security](#-security)). It prints only the host, the Moodle release and a function count — never the token, your name, user ids or course data — and ends with `doctor: N ok, M warn, K fail` (exit code 1 on any `FAIL`). It does make real requests to your Moodle.
+`--doctor` checks, in order: the base URL is valid and https; a token exists and has the right format (on macOS/Linux, that the file isn't readable by others); the site identifies itself as the Moodle you configured; the token works; and which write-capable functions your token grants (a warning, not a failure — see [Security](#-security)). It prints only the host, the Moodle release and a function count — never the token, your name, user ids or course data — and ends with `doctor: N ok, M warn, K fail` (exit code 1 on any `FAIL`). It does make real requests to your Moodle. An unknown argument (e.g. `--help`) exits with code 2 and a usage line.
+
+**Using it:** long lists are capped (50 items) and end with a `{"truncated": "N of M shown"}` entry; when you see it, ask for a narrower query, e.g. a single course. Tools run in worker threads, so a slow download doesn't freeze the assistant. JSON files can be downloaded too.
 
 Run `.venv/bin/python moodle_mcp.py --sites` (Windows: `.venv\Scripts\python moodle_mcp.py --sites`) for the full list of institutions with names and URLs; for anything not listed, set `MOODLE_URL` (https only).
 
@@ -381,7 +391,7 @@ All 37 sites were checked to be live Moodle sites (November 2026), but only TAU 
 | `MOODLE_TOKEN_FILE` | `.token` next to the script | Where to read the token from |
 | `MOODLE_DOWNLOAD_DIR` | `~/Downloads/moodle` | Where downloads are saved |
 | `MOODLE_MAX_DOWNLOAD_MB` | `100` | Size cap per download; a larger one is aborted and the partial file deleted |
-| `MOODLE_SKIP_PREFLIGHT` | off | `1` disables the site identity check before the token is sent. Only if your site blocks it, at your own risk |
+| `MOODLE_SKIP_PREFLIGHT` | off | `1` disables the site identity check before the token is sent (the server prints a one-time warning to stderr). Only if your site blocks it, at your own risk |
 | `MOODLE_DOWNLOAD_TOKEN_IN_QUERY` | off | `1` puts the token in the download URL instead of the request body. Only if a site refuses normal downloads; less safe |
 
 ### 🔒 Security
@@ -391,13 +401,15 @@ The key point: the token is **not** read-only. It is the same key the Moodle pho
 **What it protects:**
 
 - The token is sent only in a POST body (never in a URL), only to the https site you configured, and only after that site has identified itself as that host.
-- Downloads are blocked for any URL outside that site, can't escape the download folder, never overwrite files, and are size-capped.
+- Downloads are blocked for any URL outside that site, can't escape the download folder, never overwrite files, and are size-capped. File names are capped at 240 UTF-8 bytes, and paths containing `;` or double-encoded dots are refused.
+- Moodle replies are size-capped (10 MiB for the API, 64 KiB for the identity check), and the public-config request never carries the token.
 - The token is scrubbed from error messages and logs.
-- Text coming from Moodle (forums, course and file names) is marked as untrusted for Claude, stripped of hidden characters and length-limited.
+- Text coming from Moodle (forums, course and file names) is fenced in `<untrusted_moodle_content>` tags that tell Claude it is data. It is NFKC-normalised, stripped of hidden characters, length-limited, and fake fence tags inside it are neutralised.
+- In forum posts, HTML is stripped, links are kept as `text (url)`, and hidden text is dropped.
 
 **What it cannot protect:**
 
-- **Prompt injection is reduced, not eliminated.** Anyone who can post in a forum you read can try to instruct Claude. Wrapping makes that harder, not impossible.
+- **Prompt injection is reduced, not eliminated.** Anyone who can post in a forum you read can try to instruct Claude. Wrapping makes that harder, not impossible. Known limit: misnested HTML end tags inside a hidden element can still leak hidden text (it stays inside the fence).
 - The token is stored in plaintext on disk (on Windows, the `icacls` line above is your protection).
 - Someone running code on your machine, or a compromised Moodle site, is out of scope.
 - The site identity check is weak against a determined impostor.
@@ -416,6 +428,10 @@ python scripts/check_sites.py   # yearly check that institution hosts are live (
 ```
 
 `SITES` contains year-named hosts (`moodle26`, `moodle27`), so run `scripts/check_sites.py` once a year.
+
+Code layout: `moodle_mcp.py` is the server; `moodle_safety.py` holds the pure checks (URL validation, untrusted-text cleaning and fencing, download URL and file name checks, the write-function heuristic) with no network, token or environment access, and `moodle_mcp` re-exports them. Installing clones the whole repo, so nothing changes for users.
+
+The suite is about 1000 offline tests (no network, no real token), including a red-team file of attack cases. Run `pytest`; lint with `ruff check .`.
 
 ---
 
