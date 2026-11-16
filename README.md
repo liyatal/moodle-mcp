@@ -33,7 +33,9 @@
 
 <div dir="rtl">
 
-משם Claude יוריד את הפרויקט, יתקין אותו, יבחר את המוסד שלכם ויחבר את השרת. בסוף הוא יבקש מכם דבר אחד: לשמור את ה-token בעצמכם (שלב 2 למטה). את ה-token לא מדביקים בצ'אט.
+משם Claude יוריד את הפרויקט, יתקין אותו, יבחר את המוסד שלכם ויחבר את השרת ל-Claude Code, וגם ל-Claude Desktop אם הוא מותקן אצלכם. בסוף הוא יבקש מכם דבר אחד: לשמור את ה-token בעצמכם (שלב 2 למטה). את ה-token לא מדביקים בצ'אט.
+
+**איפה זה עובד:** ב-Claude Code וב-Claude Desktop (מק, ווינדוס, לינוקס). השרת רץ על המחשב שלכם, ולכן הוא לא זמין באתר claude.ai ובאפליקציה בטלפון.
 
 ## 🧰 מה הוא יודע לעשות
 
@@ -92,9 +94,16 @@ claude mcp add moodle -s user -e MOODLE_SITE=tau -- "$PWD/.venv/bin/python" "$PW
 
 <div dir="rtl">
 
-ב-**Claude Desktop** מוסיפים ל-`claude_desktop_config.json` ומפעילים מחדש את האפליקציה:
+ב-**Claude Desktop** פותחים הגדרות ← **Developer** ← **Edit Config**, מוסיפים את הבלוק הבא לקובץ `claude_desktop_config.json` ומפעילים מחדש את האפליקציה. אם כבר יש בקובץ `mcpServers`, מוסיפים רק את `moodle` לתוכו.
+
+הקובץ נמצא כאן:
 
 </div>
+
+```text
+macOS:    ~/Library/Application Support/Claude/claude_desktop_config.json
+Windows:  %APPDATA%\Claude\claude_desktop_config.json
+```
 
 ```json
 {
@@ -192,7 +201,9 @@ pbpaste > .token && chmod 600 .token
 claude mcp add moodle -s user -e MOODLE_SITE=tau -- "$PWD/.venv/bin/python" "$PWD/moodle_mcp.py"
 ```
 
-For Claude Desktop, use the JSON block shown above. Run `.venv/bin/python moodle_mcp.py --sites` for the full list of institutions with names and URLs; for anything not listed, set `MOODLE_URL`.
+For Claude Desktop, add the JSON block shown above to `claude_desktop_config.json` (Settings → Developer → Edit Config; on macOS it lives in `~/Library/Application Support/Claude/`, on Windows in `%APPDATA%\Claude\`) and restart the app. The server runs on your own computer, so it works in Claude Code and Claude Desktop but not on claude.ai in the browser or in the phone app.
+
+Run `.venv/bin/python moodle_mcp.py --sites` for the full list of institutions with names and URLs; for anything not listed, set `MOODLE_URL`.
 
 All 37 sites were checked to be live Moodle sites (November 2026), but only TAU has been tested end to end with a real token.
 
@@ -206,6 +217,7 @@ If a user gave you this repository and asked you to install it, do this:
 2. Map the institution the user named to a key: run `.venv/bin/python moodle_mcp.py --sites`. If it isn't listed, ask the user for their Moodle address and use `MOODLE_URL` instead of `MOODLE_SITE`.
 3. Register the server with absolute paths:
    `claude mcp add moodle -s user -e MOODLE_SITE=<key> -- <repo>/.venv/bin/python <repo>/moodle_mcp.py`
+   If Claude Desktop is installed (its `claude_desktop_config.json` exists: `~/Library/Application Support/Claude/` on macOS, `%APPDATA%\Claude\` on Windows), also add the server there: back the file up, then add a `moodle` entry under `mcpServers` with the same `command`, `args` and `env`, keeping every other key untouched. Tell the user to restart Claude Desktop.
 4. **Do not ask for the token in chat and do not read `.token`.** Tell the user to get their key from Moodle (Preferences → Security keys → click **Reset** on the *Moodle mobile web service* row to reveal the full key, then copy it) and run `pbpaste > <repo>/.token && chmod 600 <repo>/.token` themselves. On Windows/Linux, have them save it to that file with their own editor.
 5. After they confirm, verify with `MOODLE_SITE=<key> .venv/bin/python -c "import moodle_mcp as m; print(len(m.list_courses()), 'courses')"`, then tell them to start a new session so the tools load.
 6. If verification fails with `invalidtoken` or a web-service error, say so plainly: their institution may not issue tokens to students. Do not try to obtain a token another way.
