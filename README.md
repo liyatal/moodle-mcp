@@ -244,6 +244,10 @@ $env:MOODLE_SITE = "tau"; .venv\Scripts\python moodle_mcp.py --doctor
 | `MOODLE_MAX_DOWNLOAD_MB` | `100` | תקרת גודל להורדה אחת. הורדה גדולה יותר נעצרת והקובץ החלקי נמחק |
 | `MOODLE_SKIP_PREFLIGHT` | כבוי | `1` מכבה את בדיקת הזהות של האתר לפני שליחת ה-token (והשרת מדפיס אזהרה ל-stderr). רק אם האתר חוסם אותה, ועל אחריותכם |
 | `MOODLE_DOWNLOAD_TOKEN_IN_QUERY` | כבוי | `1` שולח את ה-token בכתובת ההורדה במקום בגוף הבקשה. רק אם אתר מסרב להורדה הרגילה. פחות בטוח |
+| `MOODLE_FULL_OUTPUT` | כבוי | `1` מפעיל "פלט מלא": מסיר בפועל את מגבלות הגודל של התוצאות (ראו למטה). רק הערך `1` בדיוק מפעיל |
+| `MOODLE_MAX_RESPONSE_MB` | `10` (ובפלט מלא `64`) | תקרת גודל לתשובה אחת של Moodle, ב-MB (עד 1024). ערך לא תקין עוצר את הקריאה עם שגיאת הגדרות |
+
+**כשצריך הכול (פלט מלא).** כברירת מחדל התוצאות מוגבלות (50 פריטים ברשימה, 1500 תווים להודעה, 8000 לפוסט בפורום וכו'). אם אתם רוצים את כל התוכן בלי חיתוך, אתם (ולא Claude) מאשרים את זה: מוסיפים `MOODLE_FULL_OUTPUT=1` ל-`env` של השרת בהגדרות ה-MCP (ב-Claude Code: `-e MOODLE_FULL_OUTPUT=1` בפקודת `claude mcp add`; ב-Claude Desktop: `"env": { "MOODLE_SITE": "tau", "MOODLE_FULL_OUTPUT": "1" }`) ומפעילים מחדש את Claude. אין כלי או פרמטר שמאפשר למודל להדליק את זה בעצמו. במצב הזה התקרות עולות ל-10,000 פריטים, 200,000 תווים לטקסט, `limit` עד 500 ותשובה עד 64 MB, ואם גם הן נחצות עדיין מופיע סימון חיתוך. כל שאר ההגנות נשארות (רשימת פונקציות מותרות, עטיפת טקסט כ-untrusted, ניקוי HTML ותווים נסתרים, מגבלת ההורדה). **זהירות:** הרבה יותר טקסט שכתבו אחרים (מרצים, סטודנטים) מגיע למודל, כך שיש יותר מקום להזרקת הוראות (prompt injection), והתשובות יכולות למלא את חלון ההקשר. השרת אומר ל-Claude שהמצב פעיל ושיש להיזהר במיוחד; `--doctor` מציג על זה `WARN`. כבו את זה כשלא צריך. שינוי של המשתנה נכנס לתוקף רק אחרי הפעלה מחדש של השרת.
 
 ## 🔒 אבטחה
 
@@ -395,6 +399,10 @@ All 37 sites were checked to be live Moodle sites (November 2026), but only TAU 
 | `MOODLE_MAX_DOWNLOAD_MB` | `100` | Size cap per download; a larger one is aborted and the partial file deleted |
 | `MOODLE_SKIP_PREFLIGHT` | off | `1` disables the site identity check before the token is sent (the server prints a one-time warning to stderr). Only if your site blocks it, at your own risk |
 | `MOODLE_DOWNLOAD_TOKEN_IN_QUERY` | off | `1` puts the token in the download URL instead of the request body. Only if a site refuses normal downloads; less safe |
+| `MOODLE_FULL_OUTPUT` | off | `1` turns on "full output": result-size limits are lifted to no practical limit (see below). Only the exact value `1` enables it |
+| `MOODLE_MAX_RESPONSE_MB` | `10` (`64` in full output) | Size cap of one Moodle reply in MB (up to 1024). An invalid value stops the call with a configuration error |
+
+**When you need everything (full output).** By default results are capped (50 items per list, 1500 characters per message, 8000 per forum post, and so on). If you want everything uncut, you approve it, not the assistant: add `MOODLE_FULL_OUTPUT=1` to the server's `env` in your MCP client config (Claude Code: `-e MOODLE_FULL_OUTPUT=1` in `claude mcp add`; Claude Desktop: `"env": { "MOODLE_SITE": "tau", "MOODLE_FULL_OUTPUT": "1" }`) and restart the client. No tool or argument lets the model switch it on itself. The ceilings then rise to 10,000 items, 200,000 characters of text, `limit` up to 500 and 64 MB per reply; if even those are hit, a truncation marker still appears. Every other protection stays (function allowlist, untrusted-content fencing, HTML and hidden-text stripping, download cap). **Caution:** much more third-party text (teachers, students) reaches the model, which means more room for prompt injection, and replies can fill the context window. The server tells the assistant that full output is on and to be extra careful; `--doctor` shows a `WARN` for it. Turn it off when you don't need it. A changed value takes effect only after the server restarts.
 
 ### 🔒 Security
 
@@ -450,7 +458,7 @@ If a user gave you this repository and asked you to install it, do this. If this
 5. **Do not ask for the token in chat and do not read `.token`.** Tell the user to get their key from Moodle (Preferences → Security keys → click **Reset** on the *Moodle mobile web service* row to reveal the full key, then copy it) and save it themselves: `pbpaste > <repo>/.token && chmod 600 <repo>/.token` on macOS, the `xclip` variant on Linux, or on Windows `Get-Clipboard | Set-Content -NoNewline .token` followed by `icacls .token /inheritance:r /grant:r "${env:USERNAME}:(R,W)"`.
 6. After they confirm, run `MOODLE_SITE=<key> <repo>/.venv/bin/python <repo>/moodle_mcp.py --doctor` and report **only** its summary lines (the `OK`/`WARN`/`FAIL` lines and the final `doctor: ...` line). **Stop on any `FAIL`** and tell the user what it says. Otherwise tell them to start a new session so the tools load.
 7. If `--doctor` fails with `invalidtoken` or a web-service error, say so plainly: their institution may not issue tokens to students. Do not try to obtain a token another way.
-8. Never use the `MOODLE_SKIP_PREFLIGHT` or `MOODLE_DOWNLOAD_TOKEN_IN_QUERY` overrides unless the user explicitly asks.
+8. Never use the `MOODLE_SKIP_PREFLIGHT`, `MOODLE_DOWNLOAD_TOKEN_IN_QUERY` or `MOODLE_FULL_OUTPUT` overrides unless the user explicitly asks.
 
 ---
 

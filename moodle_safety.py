@@ -2,12 +2,14 @@
 Pure security primitives for moodle_mcp: no network, no token, no environment, no printing.
 
 URL validation, untrusted-text cleaning and fencing, download URL / file name checks and the
-write-function heuristic. moodle_mcp imports from here; this module never imports moodle_mcp.
+write-function heuristic, and the result-size limits (`Limits`). moodle_mcp imports from here;
+this module never imports moodle_mcp.
 """
 
 import ipaddress
 import re
 import unicodedata
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
 
@@ -18,8 +20,55 @@ WORD_BACKOFF = 40  # clean_text backs up this far to avoid cutting a word in hal
 MAX_NAME = 200
 MAX_ASSIGN_STATUS_CALLS = 25
 MAX_FORUMS = 10
+MAX_MODULES_TOTAL = 300  # course_contents budget over all sections
+MAX_FILES_TOTAL = 300
+MAX_LIMIT_ARG = 50  # ceiling of the `limit` argument of the forum tools
+MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # one REST reply
 MAX_HTML_CHARS = 200_000  # html_to_text reads at most this much input
 MAX_HTML_DEPTH = 200  # and stops at this element nesting depth
+
+
+@dataclass(frozen=True)
+class Limits:
+    """Result-size ceilings of the tools. Only sizes and counts: every other check stays."""
+
+    items: int  # entries per list
+    forums: int  # forums read by forum_discussions
+    text: int  # chars of a message / description
+    post_text: int  # chars of one forum_posts message
+    name: int  # chars of a name, subject, grade ...
+    assign_status_calls: int  # submission-status calls per assignments() call
+    modules_total: int  # course_contents budget over all sections
+    files_total: int
+    limit_arg: int  # ceiling of a tool's `limit` argument
+    response_bytes: int  # one REST reply
+
+
+LIMITS_DEFAULT = Limits(
+    items=MAX_ITEMS,
+    forums=MAX_FORUMS,
+    text=MAX_TEXT,
+    post_text=MAX_POST_TEXT,
+    name=MAX_NAME,
+    assign_status_calls=MAX_ASSIGN_STATUS_CALLS,
+    modules_total=MAX_MODULES_TOTAL,
+    files_total=MAX_FILES_TOTAL,
+    limit_arg=MAX_LIMIT_ARG,
+    response_bytes=MAX_RESPONSE_BYTES,
+)
+# "Full output" (MOODLE_FULL_OUTPUT=1, set by the user, never by the model): no practical limit.
+LIMITS_FULL = Limits(
+    items=10_000,
+    forums=500,
+    text=200_000,
+    post_text=200_000,
+    name=1_000,
+    assign_status_calls=500,
+    modules_total=10_000,
+    files_total=10_000,
+    limit_arg=500,
+    response_bytes=64 * 1024 * 1024,
+)
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _COURSE_CODE_RE = re.compile(r"\d{6,} - ", re.ASCII)
@@ -82,9 +131,7 @@ _INVISIBLE = frozenset(
 )
 
 
-def clean_text(s, limit: int = MAX_TEXT) -> str:
-    """Drop control/format/surrogate/invisible chars (keep \\n, \\t), squeeze blank lines,
-    truncate."""
+def _strip_invisible(s) -> str:
     s = "" if s is None else s if isinstance(s, str) else str(s)
     s = "".join(
         c
@@ -92,7 +139,16 @@ def clean_text(s, limit: int = MAX_TEXT) -> str:
         if c in "\n\t"
         or (unicodedata.category(c) not in ("Cc", "Cf", "Cs") and c not in _INVISIBLE)
     )
-    s = re.sub(r"\n{3,}", "\n\n", s)
+    return re.sub(r"\n{3,}", "\n\n", s)
+
+
+def clean_text(s, limit: int = MAX_TEXT) -> str:
+    """Drop control/format/surrogate/invisible chars (keep \\n, \\t), squeeze blank lines,
+    truncate."""
+    return _truncate(_strip_invisible(s), limit)
+
+
+def _truncate(s: str, limit: int) -> str:
     if len(s) <= limit:
         return s
     cut = limit
@@ -226,10 +282,16 @@ def untrusted(text, source: str, *, html: bool = False, limit: int = MAX_TEXT) -
     """Fence third-party Moodle text so the model treats it as data, not instructions."""
     if text is None:
         return None
+    raw_len = None
     if html:
+        raw_len = len(text if isinstance(text, str) else str(text))
         text = html_to_text(text)
     text = unicodedata.normalize("NFKC", text if isinstance(text, str) else str(text))
-    text = clean_text(text, limit)
+    text = _strip_invisible(text)
+    if len(text) > limit:
+        text = _truncate(text, limit)
+    elif raw_len is not None and raw_len > MAX_HTML_CHARS:  # html_to_text cut the input
+        text += f"…[truncated: only the first {MAX_HTML_CHARS} of {raw_len} HTML chars read]"
     text = re.sub(r"<(\s*)/", r"<\1\\/", text)  # any closing tag, so also the fence's own
     text = _FENCE_OPEN_RE.sub(r"<\\\1", text)  # and a fake opening fence
     return f'<untrusted_moodle_content source="{source}">{text}</untrusted_moodle_content>'
