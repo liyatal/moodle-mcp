@@ -70,14 +70,29 @@ def test_exception_hierarchy(m):
 
 def test_tools_are_plain_callables_with_unchanged_signatures(m):
     expected = {
-        "list_courses": [("include_past", False)],
-        "course_contents": [("course_id", inspect.Parameter.empty)],
+        # paging added optional trailing parameters (section/query/offset), defaults keep
+        # the old calls working
+        "list_courses": [("include_past", False), ("offset", 0)],
+        "course_contents": [
+            ("course_id", inspect.Parameter.empty),
+            ("section", None),
+            ("query", None),
+            ("offset", 0),
+        ],
         "upcoming_deadlines": [("days", 14)],
-        "assignments": [("course_id", inspect.Parameter.empty)],
-        "grades": [("course_id", inspect.Parameter.empty)],
-        "forum_discussions": [("course_id", inspect.Parameter.empty), ("limit", 10)],
-        "course_updates": [("course_id", inspect.Parameter.empty), ("since_days", 7)],
-        "forum_posts": [("discussion_id", inspect.Parameter.empty), ("limit", 20)],
+        "assignments": [("course_id", inspect.Parameter.empty), ("offset", 0)],
+        "grades": [("course_id", inspect.Parameter.empty), ("offset", 0)],
+        "forum_discussions": [
+            ("course_id", inspect.Parameter.empty),
+            ("limit", 10),
+            ("offset", 0),
+        ],
+        "course_updates": [
+            ("course_id", inspect.Parameter.empty),
+            ("since_days", 7),
+            ("offset", 0),
+        ],
+        "forum_posts": [("discussion_id", inspect.Parameter.empty), ("limit", 20), ("offset", 0)],
         "download_file": [("fileurl", inspect.Parameter.empty), ("subfolder", "")],
     }
     for name, params in expected.items():

@@ -145,6 +145,12 @@ def _only_marker(item) -> str:
     return item["truncated"]
 
 
+def _page_marker(item) -> tuple[str, int]:
+    assert isinstance(item, dict)
+    assert set(item) == {"truncated", "next_offset"}
+    return item["truncated"], item["next_offset"]
+
+
 def test_assignment_files_marker_names_files(m, mock):
     files = [{"filename": f"f{i}", "fileurl": "https://x/f"} for i in range(60)]
     mock.on(
@@ -173,9 +179,13 @@ def test_course_contents_budget_marks_inner_lists_with_the_reason(m, mock):
     sections.append({"name": "U", "modules": big})  # 10 of 58: cut by the budget
     mock.on("core_course_get_contents", sections)
     result = m.course_contents(7)
-    assert _only_marker(result[0]["modules"][-1]) == "50 of 58 activities shown"
-    assert _only_marker(result[6]["modules"][-1]) == (
-        "10 of 58 activities shown (output limit reached)"
+    # paging: no marker inside sections; the page holds 300 whole activities, then one marker
+    assert all("truncated" not in x for s in result[:-1] for x in s["modules"])
+    assert [s["modules_total"] for s in result[:-1]] == [58, 58, 58, 58, 58, 40]
+    assert sum(len(s["modules"]) for s in result[:-1]) == 300
+    assert _page_marker(result[-1]) == (
+        "300 of 388 activities shown (output limit reached)",
+        300,
     )
 
 
@@ -183,17 +193,14 @@ def test_course_contents_file_budget_marks_files_with_the_reason(m, mock):
     files = [{"type": "file", "filename": "f", "fileurl": "https://x/f"} for _ in range(45)]
     mods = [{"id": i, "name": "M", "modname": "resource", "contents": files} for i in range(8)]
     mock.on("core_course_get_contents", [{"name": "S", "modules": mods}])
-    (section,) = m.course_contents(7)
-    markers = [
-        _only_marker(x["files"][-1]) for x in section["modules"] if "truncated" in x["files"][-1]
-    ]
-    # 6 x 45 = 270 files, then 30 of 45, then 0 of 45: both cut by the 300-file budget
-    assert markers == [
-        "30 of 45 files shown (output limit reached)",
-        "0 of 45 files shown (output limit reached)",
-    ]
+    section, marker = m.course_contents(7)
+    # paging: 6 x 45 = 270 files; the 7th module would not fit, so the page ends before it
+    # (no module is cut by the budget, no per-module budget markers)
+    assert all(len(x["files"]) == 45 and x["files_total"] == 45 for x in section["modules"])
+    assert len(section["modules"]) == 6
+    assert _page_marker(marker) == ("6 of 8 activities shown (output limit reached)", 6)
 
 
 def test_markers_keep_the_single_key_shape_everywhere(m, mock):
     mock.on("core_enrol_get_users_courses", [{"id": i, "enddate": 0} for i in range(1, 61)])
-    assert _only_marker(m.list_courses()[-1]) == "50 of 60 courses shown"
+    assert _page_marker(m.list_courses()[-1]) == ("50 of 60 courses shown", 50)

@@ -41,7 +41,9 @@ from moodle_safety import (
     MAX_ITEMS,
     MAX_MODULES_TOTAL,
     MAX_NAME,
+    MAX_OFFSET,
     MAX_POST_TEXT,
+    MAX_QUERY,
     MAX_TEXT,
     ConfigError,
     Limits,
@@ -60,7 +62,8 @@ from moodle_safety import (
 # fmt: off
 __all__ = [
     "MAX_ASSIGN_STATUS_CALLS", "MAX_FORUMS", "MAX_ITEMS", "MAX_NAME", "MAX_POST_TEXT", "MAX_TEXT",
-    "MAX_MODULES_TOTAL", "MAX_FILES_TOTAL", "LIMITS_DEFAULT", "LIMITS_FULL", "Limits",
+    "MAX_MODULES_TOTAL", "MAX_FILES_TOTAL", "MAX_OFFSET", "MAX_QUERY", "LIMITS_DEFAULT",
+    "LIMITS_FULL", "Limits",
     "full_output", "limits", "rest_max_bytes", "READ_FUNCTIONS",
     "HIGH_RISK", "SITES", "ConfigError", "MoodleError", "assignments", "call", "check_download_url",
     "clean_text", "course_contents", "course_updates", "download_dir", "download_file",
@@ -513,12 +516,38 @@ def _link(v) -> str | None:
     return None if bad else v
 
 
-def _capped(items: list, total: int, what: str, *, budget: bool = False) -> list:
-    """Append one visible marker saying what was cut when a cap cut the list."""
-    if total > len(items):
-        why = " (output limit reached)" if budget else ""
-        items.append({"truncated": f"{len(items)} of {total} {what} shown{why}"})
+def _capped(items: list, total: int, what: str, *, offset: int | None = None) -> list:
+    """Append one visible marker when items remain after this list.
+
+    `offset` is given by the paged tools: `items` is then the page that starts at `offset`, and
+    the marker also says where the next page starts ({"truncated": ..., "next_offset": N}).
+    Inner lists (files of a module, updates of an activity) pass no offset: {"truncated": ...}.
+    """
+    start = offset or 0
+    if total > start + len(items):
+        marker: dict = {"truncated": f"{len(items)} of {total} {what} shown"}
+        if offset is not None:
+            marker["next_offset"] = start + len(items)
+        items.append(marker)
     return items
+
+
+def _offset_arg(offset) -> int:
+    return _int_arg(offset, "offset", 0, MAX_OFFSET)
+
+
+def _fold(text) -> str:
+    """Case- and width-insensitive form of a name, for the local `query` match only."""
+    return unicodedata.normalize("NFKC", text).casefold() if isinstance(text, str) else ""
+
+
+def _query_arg(query) -> str:
+    if not isinstance(query, str):
+        raise ValueError("query must be a string")
+    q = query.strip()
+    if not 1 <= len(q) <= MAX_QUERY:
+        raise ValueError(f"query must be 1 to {MAX_QUERY} characters long")
+    return _fold(q)
 
 
 def _file(f: dict, lim: Limits) -> dict:
@@ -527,75 +556,148 @@ def _file(f: dict, lim: Limits) -> dict:
 
 
 @_tool
-def list_courses(include_past: bool = False) -> list[dict]:
-    """List the courses I'm enrolled in (current by default)."""
+def list_courses(include_past: bool = False, offset: int = 0) -> list[dict]:
+    """List the courses I'm enrolled in (current by default). A cut list ends with
+    {"truncated": ..., "next_offset": N}: call again with offset=N for the next page."""
+    _offset_arg(offset)
     lim, now = limits(), time.time()
-    out = []
+    kept = []
     for c in _dicts(call("core_enrol_get_users_courses", userid=userid())):
         end = c.get("enddate")
         ended = isinstance(end, (int, float)) and 0 < end < now
-        if ended and not include_past:
-            continue
-        out.append(
-            {
-                "id": _int(c.get("id")),
-                "name": untrusted(
-                    split_multilang_name(c.get("fullname")), "course.name", limit=lim.name
-                ),
-                "shortname": untrusted(
-                    split_multilang_name(c.get("shortname")), "course.shortname", limit=lim.name
-                ),
-                "progress": _num(c.get("progress")),
-                "ended": ended,
-            }
-        )
-    return _capped(out[: lim.items], len(out), "courses")
+        if not ended or include_past:
+            kept.append((c, ended))
+    out = [
+        {
+            "id": _int(c.get("id")),
+            "name": untrusted(
+                split_multilang_name(c.get("fullname")), "course.name", limit=lim.name
+            ),
+            "shortname": untrusted(
+                split_multilang_name(c.get("shortname")), "course.shortname", limit=lim.name
+            ),
+            "progress": _num(c.get("progress")),
+            "ended": ended,
+        }
+        for c, ended in kept[offset : offset + lim.items]
+    ]
+    return _capped(out, len(kept), "courses", offset=offset)
+
+
+def _course_file(f: dict, lim: Limits) -> dict:
+    return {
+        **_file(f, lim),
+        "size": _num(f.get("filesize")),
+        "modified": fmt_time(f.get("timemodified")),
+    }
+
+
+def _module_files(m: dict) -> list[dict]:
+    return [f for f in _dicts(m.get("contents")) if f.get("type") == "file"]
 
 
 @_tool
-def course_contents(course_id: int) -> list[dict]:
-    """Sections, activities and files of a course."""
+def course_contents(
+    course_id: int, section: int | None = None, query: str | None = None, offset: int = 0
+) -> list[dict]:
+    """Sections, activities and files of a course. Each section has its section_number and its
+    modules_total / files_total (everything that exists in it, also what is not shown); each
+    activity has its files_total.
+    Big courses come in pages: a cut reply ends with {"truncated": ..., "next_offset": N}; call
+    again with offset=N (N activities skipped) for the next page. To fetch less instead:
+    section=<section_number> returns only that section; query="text" keeps only activities and
+    files whose name contains the text (case-insensitive, 1-100 chars; matched locally, never
+    sent to Moodle). section, query and offset can be combined."""
     _int_arg(course_id, "course_id", 1)
+    if section is not None:
+        _int_arg(section, "section", 0, MAX_OFFSET)
+    needle = None if query is None else _query_arg(query)
+    _offset_arg(offset)
     lim = limits()
     sections = _dicts(call("core_course_get_contents", courseid=course_id))
-    out, mods_left, files_left, out_of_budget = [], lim.modules_total, lim.files_total, False
-    for s in sections[: lim.items]:
-        if mods_left <= 0:
-            out_of_budget = True
-            break
-        modules = _dicts(s.get("modules"))
-        mods_budget = mods_left < min(lim.items, len(modules))  # the global budget cut it
-        mods = []
-        for m in modules[: min(lim.items, mods_left)]:
-            files = [f for f in _dicts(m.get("contents")) if f.get("type") == "file"]
-            files_budget = files_left < min(lim.items, len(files))
-            shown = files[: min(lim.items, files_left)]
-            files_left -= len(shown)
-            entries = [
-                {
-                    **_file(f, lim),
-                    "size": _num(f.get("filesize")),
-                    "modified": fmt_time(f.get("timemodified")),
-                }
-                for f in shown
-            ]
-            mods.append(
+    if section is not None:
+        sections = [s for s in sections if _int(s.get("section")) == section]
+    # 1. filter locally: (section, its modules total, its files total, [(module, files, n)])
+    plan = []
+    for s in sections:
+        modules, n_files, kept = _dicts(s.get("modules")), 0, []
+        for m in modules:
+            files = _module_files(m)
+            n_all = len(files)
+            n_files += n_all
+            if needle is not None and needle not in _fold(m.get("name")):
+                files = [f for f in files if needle in _fold(f.get("filename"))]
+                if not files:
+                    continue
+            kept.append((m, files, n_all))
+        if kept or needle is None:  # with a query, sections without a match are left out
+            plan.append((s, len(modules), n_files, kept))
+    total = sum(len(kept) for *_, kept in plan)
+
+    def header(s, n_mods, n_files) -> dict:
+        return {
+            "section": untrusted(s.get("name"), "section.name", limit=lim.name),
+            "section_number": _int(s.get("section")),
+            "modules_total": n_mods,
+            "files_total": n_files,
+            "modules": [],
+        }
+
+    # 2. one page: activities offset, offset+1, ... until the module or the file budget is used.
+    # A section without activities belongs to the page that shows the next activity after it.
+    out: list[dict] = []
+    pending: list[dict] = []  # headers of sections without activities, waiting for the next one
+    pos = shown = empty_shown = 0  # pos: index in the filtered activity sequence
+    files_left, full = lim.files_total, False
+    for s, n_mods, n_files, kept in plan:
+        if not kept:
+            if pos >= offset:
+                pending.append(header(s, n_mods, n_files))
+            continue
+        entry = None
+        for m, files, n_all in kept:
+            if pos < offset:
+                pos += 1
+                continue
+            take = min(lim.items, len(files))
+            if shown >= lim.modules_total or (shown and take > files_left):
+                full = True  # the next page starts with this activity
+                break
+            for empty in pending:
+                if empty_shown < lim.items:
+                    out.append(empty)
+                    empty_shown += 1
+            pending = []
+            if entry is None:
+                entry = header(s, n_mods, n_files)
+                out.append(entry)
+            shown_files = files[: min(take, files_left)]
+            files_left -= len(shown_files)
+            entries = [_course_file(f, lim) for f in shown_files]
+            entry["modules"].append(
                 {
                     "id": _int(m.get("id")),
                     "name": untrusted(m.get("name"), "module.name", limit=lim.name),
                     "type": _word(m.get("modname")),
                     "url": _link(m.get("url")),
-                    "files": _capped(entries, len(files), "files", budget=files_budget),
+                    "files_total": n_all,
+                    "files": _capped(entries, len(files), "files"),
                 }
             )
-        mods_left -= len(mods)
+            pos += 1
+            shown += 1
+        if full:
+            break
+    if not full:  # end of the course: sections without activities after the last one
+        out.extend(pending[: max(0, lim.items - empty_shown)])
+    if offset + shown < total:
         out.append(
             {
-                "section": untrusted(s.get("name"), "section.name", limit=lim.name),
-                "modules": _capped(mods, len(modules), "activities", budget=mods_budget),
+                "truncated": f"{shown} of {total} activities shown (output limit reached)",
+                "next_offset": offset + shown,
             }
         )
-    return _capped(out, len(sections), "sections", budget=out_of_budget)
+    return out
 
 
 @_tool
@@ -624,15 +726,18 @@ def upcoming_deadlines(days: int = 14) -> list[dict]:
 
 
 @_tool
-def assignments(course_id: int) -> list[dict]:
-    """Assignments of a course with due dates, my submission status and attached files."""
+def assignments(course_id: int, offset: int = 0) -> list[dict]:
+    """Assignments of a course with due dates, my submission status and attached files.
+    A cut list ends with {"truncated": ..., "next_offset": N}: call again with offset=N for the
+    next page."""
     _int_arg(course_id, "course_id", 1)
+    _offset_arg(offset)
     lim = limits()
     res = call("mod_assign_get_assignments", courseids=[course_id])
     res = res if isinstance(res, dict) else {}
     items = [a for c in _dicts(res.get("courses")) for a in _dicts(c.get("assignments"))]
     out, status_calls, failures_in_a_row = [], 0, 0
-    for a in items[: lim.items]:
+    for a in items[offset : offset + lim.items]:  # status calls only for this page
         status = None
         # breaker: after 3 consecutive non-auth failures stop asking (don't wait out 25 timeouts)
         if status_calls < lim.assign_status_calls and failures_in_a_row < 3 and _int(a.get("id")):
@@ -659,13 +764,15 @@ def assignments(course_id: int) -> list[dict]:
                 ),
             }
         )
-    return _capped(out, len(items), "assignments")
+    return _capped(out, len(items), "assignments", offset=offset)
 
 
 @_tool
-def grades(course_id: int) -> list[dict]:
-    """My grade items in a course."""
+def grades(course_id: int, offset: int = 0) -> list[dict]:
+    """My grade items in a course. A cut list ends with {"truncated": ..., "next_offset": N}:
+    call again with offset=N for the next page."""
     _int_arg(course_id, "course_id", 1)
+    _offset_arg(offset)
     lim = limits()
     res = call("gradereport_user_get_grade_items", courseid=course_id, userid=userid())
     res = res if isinstance(res, dict) else {}
@@ -679,24 +786,27 @@ def grades(course_id: int) -> list[dict]:
                 i.get("percentageformatted"), "grade.percentage", limit=lim.name
             ),
         }
-        for i in items[: lim.items]
+        for i in items[offset : offset + lim.items]
     ]
-    return _capped(out, len(items), "grade items")
+    return _capped(out, len(items), "grade items", offset=offset)
 
 
 @_tool
-def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
-    """Latest discussions in a course's forums (announcements included). Each message is
-    shortened (opening post only); forum_posts(discussion_id) returns the whole thread with the
-    full text (up to 8000 chars per post by default)."""
+def forum_discussions(course_id: int, limit: int = 10, offset: int = 0) -> list[dict]:
+    """Latest discussions in a course's forums (announcements included): up to `limit` per
+    forum. Each message is shortened (opening post only); forum_posts(discussion_id) returns
+    the whole thread with the full text (up to 8000 chars per post by default). A cut list ends
+    with {"truncated": ..., "next_offset": N}: call again with offset=N for the next page;
+    "N+" in the marker means the total is at least N."""
     lim = limits()
     _int_arg(course_id, "course_id", 1)
     _int_arg(limit, "limit", 1, lim.limit_arg)
+    _offset_arg(offset)
     forums = _dicts(call("mod_forum_get_forums_by_courses", courseids=[course_id]))
-    out, unread_forums = [], len(forums) > lim.forums
-    for f in forums[: lim.forums]:
-        if len(out) >= lim.items:
-            unread_forums = True
+    out, stopped_early = [], False
+    for f in forums[: lim.forums]:  # never more than lim.forums discussion calls
+        if len(out) >= offset + lim.items:  # this page is full: later forums are not read
+            stopped_early = True
             break
         res = call(
             "mod_forum_get_forum_discussions", forumid=f.get("id"), perpage=limit, sortorder=1
@@ -715,21 +825,27 @@ def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
                     ),
                 }
             )
-    shown = out[: lim.items]
-    if unread_forums:  # forums past the cap were not read, so the total is a lower bound
-        shown.append({"truncated": f"{len(shown)} of {len(out)}+ discussions shown"})
+    shown = out[offset : offset + lim.items]
+    more = stopped_early or len(out) > offset + len(shown)  # reachable with a next page
+    if stopped_early or len(forums) > lim.forums:  # unread forums: the total is a lower bound
+        marker: dict = {"truncated": f"{len(shown)} of {len(out)}+ discussions shown"}
+        if more:
+            marker["next_offset"] = offset + len(shown)
+        shown.append(marker)  # without next_offset: only forums past the cap remain unread
         return shown
-    return _capped(shown, len(out), "discussions")
+    return _capped(shown, len(out), "discussions", offset=offset)
 
 
 @_tool
-def forum_posts(discussion_id: int, limit: int = 20) -> list[dict]:
+def forum_posts(discussion_id: int, limit: int = 20, offset: int = 0) -> list[dict]:
     """The whole thread of one forum discussion: opening post and replies, oldest first, each
     with its full text (up to 8000 chars per post by default). The discussion_id comes from
-    forum_discussions."""
+    forum_discussions. Returns up to `limit` posts; a cut thread ends with
+    {"truncated": ..., "next_offset": N}: call again with offset=N for the next posts."""
     lim = limits()
     _int_arg(discussion_id, "discussion_id", 1)
     _int_arg(limit, "limit", 1, lim.limit_arg)
+    _offset_arg(offset)
     res = call(
         "mod_forum_get_discussion_posts",
         discussionid=discussion_id,
@@ -748,9 +864,9 @@ def forum_posts(discussion_id: int, limit: int = 20) -> list[dict]:
                 p.get("message") or "", "post.message", html=True, limit=lim.post_text
             ),
         }
-        for p in posts[:limit]
+        for p in posts[offset : offset + limit]
     ]
-    return _capped(out, len(posts), "posts")
+    return _capped(out, len(posts), "posts", offset=offset)
 
 
 _AREA_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")  # update area names are PARAM_ALPHANUMEXT
@@ -762,12 +878,15 @@ def _area(v) -> str | None:
 
 
 @_tool
-def course_updates(course_id: int, since_days: int = 7) -> list[dict]:
+def course_updates(course_id: int, since_days: int = 7, offset: int = 0) -> list[dict]:
     """What changed in a course recently: activities with new or updated content, files,
     grades, comments... in the last N days (1-90). Each update has an area ("what"), a "count"
-    and "when"; "when" is null for areas where Moodle reports only a count, not a time."""
+    and "when"; "when" is null for areas where Moodle reports only a count, not a time.
+    A cut list ends with {"truncated": ..., "next_offset": N}: call again with offset=N for the
+    next page."""
     _int_arg(course_id, "course_id", 1)
     _int_arg(since_days, "since_days", 1, 90)
+    _offset_arg(offset)
     lim = limits()
     since = int(time.time()) - since_days * 86400
     res = call("core_course_get_updates_since", courseid=course_id, since=since)
@@ -785,7 +904,7 @@ def course_updates(course_id: int, since_days: int = 7) -> list[dict]:
                 if _int(m.get("id")) is not None:
                     modules.setdefault(m["id"], m)
     out = []
-    for inst in instances[: lim.items]:
+    for inst in instances[offset : offset + lim.items]:
         cmid = _int(inst.get("id"))
         mod = modules.get(cmid, {}) if cmid is not None else {}
         updates = _dicts(inst.get("updates"))
@@ -805,7 +924,7 @@ def course_updates(course_id: int, since_days: int = 7) -> list[dict]:
                 "updates": _capped(entries, len(updates), "updates"),
             }
         )
-    return _capped(out, len(instances), "activities")
+    return _capped(out, len(instances), "activities", offset=offset)
 
 
 _SAVE_ERROR = "Could not save the file (disk or path problem)."

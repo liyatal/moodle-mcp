@@ -433,14 +433,15 @@ def test_assignment_status_and_deadline_type_must_be_short_words(m, mock):
 # ======================================================== async registration with FastMCP
 
 EXPECTED_SCHEMA = {
-    "list_courses": ({"include_past"}, set()),
-    "course_contents": ({"course_id"}, {"course_id"}),
+    # paging: optional section/query/offset parameters (never required)
+    "list_courses": ({"include_past", "offset"}, set()),
+    "course_contents": ({"course_id", "section", "query", "offset"}, {"course_id"}),
     "upcoming_deadlines": ({"days"}, set()),
-    "assignments": ({"course_id"}, {"course_id"}),
-    "grades": ({"course_id"}, {"course_id"}),
-    "forum_discussions": ({"course_id", "limit"}, {"course_id"}),
-    "course_updates": ({"course_id", "since_days"}, {"course_id"}),
-    "forum_posts": ({"discussion_id", "limit"}, {"discussion_id"}),
+    "assignments": ({"course_id", "offset"}, {"course_id"}),
+    "grades": ({"course_id", "offset"}, {"course_id"}),
+    "forum_discussions": ({"course_id", "limit", "offset"}, {"course_id"}),
+    "course_updates": ({"course_id", "since_days", "offset"}, {"course_id"}),
+    "forum_posts": ({"discussion_id", "limit", "offset"}, {"discussion_id"}),
     "download_file": ({"fileurl", "subfolder"}, {"fileurl"}),
 }
 

@@ -42,7 +42,7 @@ Claude יציג לכם קודם את הפקודות, יבקש שתאשרו את 
 | כלי | מה הוא עושה |
 | --- | --- |
 | `list_courses` | הקורסים שאתם רשומים אליהם |
-| `course_contents` | יחידות, פעילויות וקבצים של קורס |
+| `course_contents` | יחידות, פעילויות וקבצים של קורס; לכל יחידה מספר (`section_number`) וספירה של מה שיש בה (`modules_total`, `files_total`). אפשר לסנן ליחידה אחת (`section`) או לפי שם (`query`) |
 | `upcoming_deadlines` | מטלות ובחנים בימים הקרובים |
 | `assignments` | תאריכי הגשה, סטטוס ההגשה שלכם וקבצים מצורפים |
 | `grades` | הציונים שלכם בקורס |
@@ -51,7 +51,7 @@ Claude יציג לכם קודם את הפקודות, יבקש שתאשרו את 
 | `course_updates` | מה השתנה בקורס בימים האחרונים (קבצים, פעילויות, ציונים), עם שמות הפעילויות |
 | `download_file` | שמירת קובץ מהקורס ל-`~/Downloads/moodle` (גם קבצי JSON) |
 
-רשימות ארוכות נחתכות (עד 50 פריטים), ובסוף הרשימה מופיע פריט שאומר מה נחתך, למשל `{"truncated": "50 of 80 courses shown"}`. טקסט ארוך נחתך בסוף מילה ומסומן `…[truncated: 1500 of 4200 chars]`; `forum_posts` מחזיר הודעה מלאה עד 8000 תווים. ב-`course_updates` השדה `when` לפעמים ריק (`null`), כי עבור חלק מסוגי העדכונים Moodle מדווח רק כמה פריטים השתנו, בלי זמן. כשרואים סימון חיתוך ברשימה, מבקשים שאילתה צרה יותר, למשל קורס אחד. הכלים רצים ב-thread נפרד, כך שהורדה איטית לא מקפיאה את Claude.
+רשימות ארוכות מגיעות בעמודים (עד 50 פריטים; ב-`course_contents` עד 300 פעילויות או 300 קבצים לעמוד), ובסוף העמוד מופיע פריט אחד שאומר מה נחתך ומאיפה ממשיכים, למשל `{"truncated": "50 of 80 courses shown", "next_offset": 50}`; Claude קורא שוב לאותו כלי עם `offset=50` ומקבל את ההמשך (בכל הכלים חוץ מ-`upcoming_deadlines` ו-`download_file`). בקורס גדול עדיף לסנן: `section=<מספר יחידה>` מחזיר רק את היחידה הזאת, ו-`query="טקסט"` משאיר רק פעילויות וקבצים שהשם שלהם מכיל את הטקסט (בלי תלות באותיות גדולות/קטנות; הסינון נעשה מקומית ולא נשלח ל-Moodle). דוגמאות: "תראה לי מה יש ביחידה 3 בקורס אלגוריתמים", "תמצא בקורס אלגוריתמים את כל הקבצים עם 'תרגול' בשם", "תמשיך את רשימת הקבצים מאיפה שנעצרת". טקסט ארוך נחתך בסוף מילה ומסומן `…[truncated: 1500 of 4200 chars]`; `forum_posts` מחזיר הודעה מלאה עד 8000 תווים. ב-`course_updates` השדה `when` לפעמים ריק (`null`), כי עבור חלק מסוגי העדכונים Moodle מדווח רק כמה פריטים השתנו, בלי זמן. כשרואים סימון חיתוך ברשימה, מבקשים שאילתה צרה יותר, למשל קורס אחד. הכלים רצים ב-thread נפרד, כך שהורדה איטית לא מקפיאה את Claude.
 
 ## 🚀 התקנה ידנית
 
@@ -381,7 +381,7 @@ $env:MOODLE_SITE = "tau"; .venv\Scripts\python moodle_mcp.py --doctor
 
 `--doctor` checks, in order: the base URL is valid and https; a token exists and has the right format (on macOS/Linux, that the file isn't readable by others); the site identifies itself as the Moodle you configured; the token works; and which write-capable functions your token grants (a warning, not a failure — see [Security](#-security)). It prints only the host, the Moodle release and a function count — never the token, your name, user ids or course data — and ends with `doctor: N ok, M warn, K fail` (exit code 1 on any `FAIL`). It does make real requests to your Moodle. An unknown argument (e.g. `--help`) exits with code 2 and a usage line.
 
-**Using it:** long lists are capped (50 items) and end with an entry saying what was cut, e.g. `{"truncated": "50 of 80 courses shown"}`. Long text is cut at a word boundary and marked `…[truncated: 1500 of 4200 chars]`; `forum_posts` returns a post in full up to 8000 characters. In `course_updates`, `when` is often `null`: for some update areas Moodle reports only a count, not a time. When you see a truncation marker on a list, ask for a narrower query, e.g. a single course. Tools run in worker threads, so a slow download doesn't freeze the assistant. JSON files can be downloaded too.
+**Using it:** long lists come in pages (50 items; `course_contents`: up to 300 activities or 300 files per page) and end with one entry saying what was cut and where to continue, e.g. `{"truncated": "50 of 80 courses shown", "next_offset": 50}`; the assistant calls the same tool again with `offset=50` for the rest (every list tool except `upcoming_deadlines` and `download_file`). For a big course, filter instead: in `course_contents`, every section has a `section_number` and counts (`modules_total`, `files_total`); `section=<number>` returns just that section, and `query="text"` keeps only activities and files whose name contains the text (case-insensitive, matched locally, never sent to Moodle). Example prompts: "Show me section 3 of my Algorithms course", "Find every file with 'tutorial' in its name in Algorithms", "Continue the file list where you stopped". Long text is cut at a word boundary and marked `…[truncated: 1500 of 4200 chars]`; `forum_posts` returns a post in full up to 8000 characters. In `course_updates`, `when` is often `null`: for some update areas Moodle reports only a count, not a time. When you see a truncation marker on a list, ask for a narrower query, e.g. a single course. Tools run in worker threads, so a slow download doesn't freeze the assistant. JSON files can be downloaded too.
 
 Run `.venv/bin/python moodle_mcp.py --sites` (Windows: `.venv\Scripts\python moodle_mcp.py --sites`) for the full list of institutions with names and URLs; for anything not listed, set `MOODLE_URL` (https only).
 

@@ -169,7 +169,7 @@ def test_list_courses_full_mode_marker_past_the_full_ceiling(m, mock, full):
     mock.on("core_enrol_get_users_courses", courses(10_001))
     out = m.list_courses()
     assert len(out) == 10_001
-    assert out[-1] == {"truncated": "10000 of 10001 courses shown"}
+    assert out[-1] == {"truncated": "10000 of 10001 courses shown", "next_offset": 10000}
 
 
 def test_long_names_full_mode(m, mock, full):
@@ -221,15 +221,20 @@ def test_course_contents_default_still_capped(m, mock):
     mock.on("core_course_get_contents", _contents(60, 70, 2))
     out = m.course_contents(1)
     mods = [x for s in out if "modules" in s for x in s["modules"] if "id" in x]
-    assert len(mods) == m.MAX_MODULES_TOTAL
-    assert markers(out)
+    # paging: 2 files per module, so the 300-file budget ends the page after 150 modules
+    assert len(mods) == m.MAX_FILES_TOTAL // 2
+    assert markers(out) == [out[-1]] and out[-1]["next_offset"] == 150
 
 
 def test_course_contents_full_mode_budget_marker(m, mock, full):
     mock.on("core_course_get_contents", _contents(1, 10_050, 0))
     out = m.course_contents(1)
-    assert len(out[0]["modules"]) == 10_001
-    assert out[0]["modules"][-1]["truncated"].startswith("10000 of 10050 activities shown")
+    # paging: one final marker after the section instead of a marker inside it
+    assert len(out[0]["modules"]) == 10_000
+    assert out[-1] == {
+        "truncated": "10000 of 10050 activities shown (output limit reached)",
+        "next_offset": 10_000,
+    }
 
 
 def _forums(n):

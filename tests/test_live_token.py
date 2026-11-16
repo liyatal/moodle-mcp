@@ -47,10 +47,18 @@ def fenced(value) -> bool:
     return isinstance(value, str) and value.startswith(FENCE_OPEN) and value.endswith(FENCE_CLOSE)
 
 
+_MARKER_KEYS = {"truncated", "next_offset"}
+
+
+def is_marker(item) -> bool:
+    """A truncation marker: {"truncated": ...}, optionally with "next_offset" (paged tools)."""
+    return isinstance(item, dict) and "truncated" in item and set(item) <= _MARKER_KEYS
+
+
 def real_items(items):
-    """Drop the trailing {"truncated": ...} marker, if any."""
+    """Drop the {"truncated": ...[, "next_offset": N]} marker, if any."""
     assert isinstance(items, list)
-    return [i for i in items if not (isinstance(i, dict) and set(i) == {"truncated"})]
+    return [i for i in items if not is_marker(i)]
 
 
 @pytest.fixture
@@ -117,9 +125,12 @@ def test_course_tools_shapes_on_the_first_courses(live, courses):
                 continue
             seen["contents"] += 1
             assert fenced(s["section"])
+            assert s["section_number"] is None or isinstance(s["section_number"], int)
+            assert isinstance(s["modules_total"], int) and isinstance(s["files_total"], int)
             for mod in real_items(s["modules"]):
                 assert isinstance(mod["id"], int) or mod["id"] is None
                 assert fenced(mod["name"])
+                assert isinstance(mod["files_total"], int)
                 for f in real_items(mod["files"]):
                     assert fenced(f["filename"])
                     assert f["fileurl"] is None or f["fileurl"].startswith("https://")
@@ -186,3 +197,24 @@ def test_no_tool_output_contains_the_token(live, courses):
     text = json.dumps(blobs, ensure_ascii=False)
     assert token not in text
     assert "wstoken" not in text.lower()
+
+
+def test_course_contents_pages_and_section_filter(live, courses):
+    """Shapes only: next_offset continues the listing, section= returns that section only."""
+    for c in courses[:6]:
+        first = live.course_contents(c["id"])
+        sections = [s for s in real_items(first) if "modules" in s]
+        if not sections:
+            continue
+        markers = [i for i in first if is_marker(i)]
+        assert len(markers) <= 1
+        if markers:
+            nxt = markers[0]["next_offset"]
+            assert isinstance(nxt, int) and nxt > 0
+            assert isinstance(live.course_contents(c["id"], offset=nxt), list)
+        number = sections[0]["section_number"]
+        if isinstance(number, int):
+            only = real_items(live.course_contents(c["id"], section=number))
+            assert only and all(s["section_number"] == number for s in only)
+        return
+    pytest.skip("no course with sections in the first courses")

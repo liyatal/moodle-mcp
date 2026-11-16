@@ -222,9 +222,13 @@ def test_course_contents_total_output_is_bounded(m, mock):
     shown = [s for s in out if "modules" in s]
     modules = [x for s in shown for x in s["modules"] if "id" in x]
     files_shown = [f for x in modules for f in x["files"] if "filename" in f]
-    assert len(modules) == m.MAX_MODULES_TOTAL
+    # paging: the page ends where the next module's files no longer fit the 300-file budget
+    assert len(modules) == 6
     assert len(files_shown) == m.MAX_FILES_TOTAL
-    assert out[-1] == {"truncated": f"{len(shown)} of 8 sections shown (output limit reached)"}
+    assert out[-1] == {
+        "truncated": "6 of 416 activities shown (output limit reached)",
+        "next_offset": 6,
+    }
 
 
 # ---------------------------------------------------------------------------- download flow

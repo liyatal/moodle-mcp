@@ -87,7 +87,7 @@ def test_list_courses_caps_items(m, mock):
     result = m.list_courses()
     assert len(result) == m.MAX_ITEMS + 1
     assert all("id" in c for c in result[:-1])
-    assert result[-1] == {"truncated": "50 of 80 courses shown"}
+    assert result[-1] == {"truncated": "50 of 80 courses shown", "next_offset": 50}
 
 
 def test_no_truncation_marker_when_nothing_was_cut(m, mock):
@@ -208,20 +208,22 @@ def test_course_contents_caps_sections_modules_and_files(m, mock):
     ]
     mock.on("core_course_get_contents", sections)
     result = m.course_contents(7)
+    # paging: one page holds whole modules until the 300-file budget would be exceeded
+    # (6 x 50 files), then ONE final marker says where the next page starts
     assert result[-1] == {
-        "truncated": f"{len(result) - 1} of 52 sections shown (output limit reached)"
+        "truncated": "6 of 2704 activities shown (output limit reached)",
+        "next_offset": 6,
     }
     sections_shown = result[:-1]
-    # global budgets: 300 modules and 300 files over the whole reply, each list also capped at 50
-    modules = [mod for s in sections_shown for mod in s["modules"] if "id" in mod]
+    modules = [mod for s in sections_shown for mod in s["modules"]]
     files = [f for mod in modules for f in mod["files"] if "filename" in f]
     assert len(modules) <= m.MAX_MODULES_TOTAL
     assert len(files) <= m.MAX_FILES_TOTAL
     first = sections_shown[0]
-    assert first["modules"][-1] == {"truncated": "50 of 52 activities shown"}
-    assert len([x for x in first["modules"] if "id" in x]) == m.MAX_ITEMS
+    assert first["modules_total"] == 52 and first["files_total"] == 52 * 52
     first_files = first["modules"][0]["files"]
-    assert first_files[-1] == {"truncated": "50 of 52 files shown"}
+    assert first_files[-1] == {"truncated": "50 of 52 files shown"}  # per-module ceiling
+    assert first["modules"][0]["files_total"] == 52
     assert len([f for f in first_files if "filename" in f]) == m.MAX_ITEMS
 
 
@@ -243,10 +245,14 @@ def test_course_contents_global_budget_stops_the_listing(m, mock):
         for x in s["modules"]
         if "id" in x
     )
-    assert n_modules == m.MAX_MODULES_TOTAL
+    # paging: 30 modules x 10 files fill the 300-file budget; one final marker
+    assert n_modules == 30
     assert n_files == m.MAX_FILES_TOTAL
-    assert result[-1] == {"truncated": f"{len(shown)} of 50 sections shown (output limit reached)"}
-    assert len(shown) == 6  # 300 modules / 50 per section
+    assert result[-1] == {
+        "truncated": "30 of 2500 activities shown (output limit reached)",
+        "next_offset": 30,
+    }
+    assert len(shown) == 1
 
 
 # ========================================================================== upcoming_deadlines
@@ -507,7 +513,7 @@ def test_assignments_result_is_capped_at_max_items(m, mock):
     mock.on("mod_assign_get_submission_status", _status())
     result = m.assignments(7)
     assert len(result) == m.MAX_ITEMS + 1
-    assert result[-1] == {"truncated": "50 of 90 assignments shown"}
+    assert result[-1] == {"truncated": "50 of 90 assignments shown", "next_offset": 50}
     calls = mock.functions_called().count("mod_assign_get_submission_status")
     assert calls <= m.MAX_ASSIGN_STATUS_CALLS
 
@@ -575,7 +581,7 @@ def test_grades_caps_items(m, mock):
     mock.on("gradereport_user_get_grade_items", {"usergrades": [{"gradeitems": items}]})
     result = m.grades(7)
     assert len(result) == m.MAX_ITEMS + 1
-    assert result[-1] == {"truncated": "50 of 90 grade items shown"}
+    assert result[-1] == {"truncated": "50 of 90 grade items shown", "next_offset": 50}
 
 
 # ============================================================================ forum_discussions
@@ -702,7 +708,8 @@ def test_forum_discussions_caps_total(m, mock):
     )
     result = m.forum_discussions(7, limit=50)
     assert len(result) == m.MAX_ITEMS + 1
-    assert result[-1] == {"truncated": "50 of 60+ discussions shown"}  # 3rd forum was not even read
+    # 3rd forum was not even read: lower bound, and the next page reads it
+    assert result[-1] == {"truncated": "50 of 60+ discussions shown", "next_offset": 50}
     assert mock.functions_called().count("mod_forum_get_forum_discussions") == 2
 
 
