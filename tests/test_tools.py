@@ -84,7 +84,17 @@ def test_list_courses_missing_and_null_fields(m, mock):
 
 def test_list_courses_caps_items(m, mock):
     mock.on("core_enrol_get_users_courses", [_course(i) for i in range(1, 81)])
-    assert len(m.list_courses()) == m.MAX_ITEMS
+    result = m.list_courses()
+    assert len(result) == m.MAX_ITEMS + 1
+    assert all("id" in c for c in result[:-1])
+    assert result[-1] == {"truncated": "50 of 80 shown"}
+
+
+def test_no_truncation_marker_when_nothing_was_cut(m, mock):
+    mock.on("core_enrol_get_users_courses", [_course(i) for i in range(1, 51)])
+    result = m.list_courses()
+    assert len(result) == 50
+    assert all("truncated" not in c for c in result)
 
 
 def test_list_courses_empty(m, mock):
@@ -182,25 +192,59 @@ def test_course_contents_missing_and_null_fields(m, mock):
 
 def test_course_contents_caps_sections_modules_and_files(m, mock):
     many_files = [
-        {"type": "file", "filename": f"f{i}", "fileurl": f"https://x/{i}", "filesize": 1}
-        for i in range(80)
+        {"type": "file", "filename": "f", "fileurl": "u"}
+        for i in range(52)  # kept small: the whole mock reply must stay under the 10 MiB cap
     ]
     sections = [
         {
             "id": s,
-            "name": f"S{s}",
+            "name": "S",
             "modules": [
-                {"id": i, "name": f"M{i}", "modname": "resource", "contents": many_files}
-                for i in range(80)
+                {"id": i, "name": "M", "modname": "resource", "contents": many_files}
+                for i in range(52)
             ],
         }
-        for s in range(80)
+        for s in range(52)
     ]
     mock.on("core_course_get_contents", sections)
     result = m.course_contents(7)
-    assert len(result) == m.MAX_ITEMS
-    assert len(result[0]["modules"]) == m.MAX_ITEMS
-    assert len(result[0]["modules"][0]["files"]) == m.MAX_ITEMS
+    assert result[-1] == {"truncated": f"{len(result) - 1} of 52 shown"}
+    sections_shown = result[:-1]
+    # global budgets: 300 modules and 300 files over the whole reply, each list also capped at 50
+    modules = [mod for s in sections_shown for mod in s["modules"] if "id" in mod]
+    files = [f for mod in modules for f in mod["files"] if "filename" in f]
+    assert len(modules) <= m.MAX_MODULES_TOTAL
+    assert len(files) <= m.MAX_FILES_TOTAL
+    first = sections_shown[0]
+    assert first["modules"][-1] == {"truncated": "50 of 52 shown"}
+    assert len([x for x in first["modules"] if "id" in x]) == m.MAX_ITEMS
+    first_files = first["modules"][0]["files"]
+    assert first_files[-1] == {"truncated": "50 of 52 shown"}
+    assert len([f for f in first_files if "filename" in f]) == m.MAX_ITEMS
+
+
+def test_course_contents_global_budget_stops_the_listing(m, mock):
+    files = [
+        {"type": "file", "filename": f"f{i}", "fileurl": f"https://x/{i}", "filesize": 1}
+        for i in range(10)
+    ]
+    mods = [{"id": i, "name": f"M{i}", "modname": "resource", "contents": files} for i in range(50)]
+    mock.on(
+        "core_course_get_contents", [{"id": s, "name": f"S{s}", "modules": mods} for s in range(50)]
+    )
+    result = m.course_contents(7)
+    shown = [s for s in result if "modules" in s]
+    n_modules = sum(len([x for x in s["modules"] if "id" in x]) for s in shown)
+    n_files = sum(
+        len([f for f in x["files"] if "filename" in f])
+        for s in shown
+        for x in s["modules"]
+        if "id" in x
+    )
+    assert n_modules == m.MAX_MODULES_TOTAL
+    assert n_files == m.MAX_FILES_TOTAL
+    assert result[-1] == {"truncated": f"{len(shown)} of 50 shown"}
+    assert len(shown) == 6  # 300 modules / 50 per section
 
 
 # ========================================================================== upcoming_deadlines
@@ -291,7 +335,9 @@ def test_upcoming_deadlines_caps_items(m, mock):
         "core_calendar_get_action_events_by_timesort",
         {"events": [_event(i) for i in range(90)]},
     )
-    assert len(m.upcoming_deadlines()) == m.MAX_ITEMS
+    result = m.upcoming_deadlines()
+    assert len(result) == m.MAX_ITEMS + 1
+    assert result[-1] == {"truncated": "50 of 90 shown"}
 
 
 # ================================================================================= assignments
@@ -457,7 +503,9 @@ def test_assignments_status_calls_are_capped(m, mock):
 def test_assignments_result_is_capped_at_max_items(m, mock):
     mock.on("mod_assign_get_assignments", _assign_payload([_assign(i) for i in range(1, 91)]))
     mock.on("mod_assign_get_submission_status", _status())
-    assert len(m.assignments(7)) == m.MAX_ITEMS
+    result = m.assignments(7)
+    assert len(result) == m.MAX_ITEMS + 1
+    assert result[-1] == {"truncated": "50 of 90 shown"}
     calls = mock.functions_called().count("mod_assign_get_submission_status")
     assert calls <= m.MAX_ASSIGN_STATUS_CALLS
 
@@ -491,11 +539,12 @@ def test_grades_shape_and_wrapping(m, mock):
     assert fields["courseid"] == "7"
     assert fields["userid"] == "42"
     assert unwrap(result[0]["item"])[1] == "Homework 1"
-    assert result[0]["grade"] == "90.00"
-    assert result[0]["range"] == "0-100"
-    assert result[0]["percentage"] == "90.00 %"
+    assert unwrap(result[0]["grade"])[1] == "90.00"
+    assert unwrap(result[0]["range"])[1] == "0-100"
+    assert unwrap(result[0]["percentage"])[1] == "90.00 %"
     assert unwrap(result[1]["item"])[1] == "Course total"
-    assert result[1]["grade"] == "85"
+    assert unwrap(result[1]["grade"])[1] == "85"
+    assert result[1]["range"] is None  # a missing field stays None (not an empty fence)
 
 
 def test_grades_hostile_and_missing_fields(m, mock):
@@ -522,7 +571,9 @@ def test_grades_empty(m, mock):
 def test_grades_caps_items(m, mock):
     items = [{"itemname": f"I{i}", "gradeformatted": "1"} for i in range(90)]
     mock.on("gradereport_user_get_grade_items", {"usergrades": [{"gradeitems": items}]})
-    assert len(m.grades(7)) == m.MAX_ITEMS
+    result = m.grades(7)
+    assert len(result) == m.MAX_ITEMS + 1
+    assert result[-1] == {"truncated": "50 of 90 shown"}
 
 
 # ============================================================================ forum_discussions
@@ -624,7 +675,9 @@ def test_forum_discussions_limits_forums(m, mock):
     mock.on("mod_forum_get_forum_discussions", {"discussions": [_discussion(1)]})
     result = m.forum_discussions(7)
     assert mock.functions_called().count("mod_forum_get_forum_discussions") == m.MAX_FORUMS
-    assert len(result) == m.MAX_FORUMS
+    # 10 forums read, 5 forums never asked: the total is only a lower bound
+    assert len(result) == m.MAX_FORUMS + 1
+    assert result[-1] == {"truncated": "10 of 10+ shown"}
 
 
 def test_forum_discussions_caps_total(m, mock):
@@ -633,7 +686,10 @@ def test_forum_discussions_caps_total(m, mock):
         "mod_forum_get_forum_discussions",
         {"discussions": [_discussion(i) for i in range(30)]},
     )
-    assert len(m.forum_discussions(7, limit=50)) == m.MAX_ITEMS
+    result = m.forum_discussions(7, limit=50)
+    assert len(result) == m.MAX_ITEMS + 1
+    assert result[-1] == {"truncated": "50 of 60+ shown"}  # 3rd forum was not even read
+    assert mock.functions_called().count("mod_forum_get_forum_discussions") == 2
 
 
 def test_forum_discussions_no_forums(m, mock):

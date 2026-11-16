@@ -73,6 +73,12 @@ def test_call_rejects_non_string_function_without_http(m, mock):
 
 @pytest.mark.parametrize("function", sorted(EXPECTED_READ_FUNCTIONS))
 def test_every_read_function_is_callable(m, mock, function):
+    if function == "tool_mobile_get_public_config":
+        # public: answered by the token-less nologin endpoint, never by the REST endpoint
+        assert m.call(function)["wwwroot"] == TAU_URL
+        assert mock.rest_requests() == []
+        assert len(mock.preflight_requests()) == 1
+        return
     mock.on(function, {})
     assert m.call(function) == {}
     assert function in mock.functions_called()
@@ -400,11 +406,23 @@ def test_skip_preflight_env_makes_no_identity_request(m, mock, monkeypatch):
     assert mock.preflight_requests() == []
 
 
-def test_public_config_call_is_exempt_from_preflight(m, mock):
-    mock.preflight = _preflight("https://evil.example.com")
-    mock.on("tool_mobile_get_public_config", {"wwwroot": TAU_URL})
-    assert m.call("tool_mobile_get_public_config") == {"wwwroot": TAU_URL}
-    assert mock.preflight_requests() == []
+def test_public_config_call_uses_the_tokenless_endpoint_and_never_sends_the_token(m, mock):
+    mock.preflight = _preflight("https://evil.example.com")  # even an impostor gets no token
+    assert m.call("tool_mobile_get_public_config") == {"wwwroot": "https://evil.example.com"}
+    assert mock.rest_requests() == []
+    assert len(mock.preflight_requests()) == 1
+    for request in mock.requests:
+        assert FAKE_TOKEN.encode() not in request.content
+        assert FAKE_TOKEN not in str(request.url)
+        assert "token" not in request.url.query.decode().lower().replace("tool_mobile", "")
+        assert all(FAKE_TOKEN not in v for v in request.headers.values())
+        assert "wstoken" not in request.content.decode()
+    assert mock.foreign_requests() == []
+
+
+def test_public_config_call_with_a_missing_token_still_works(m, mock, monkeypatch):
+    monkeypatch.delenv("MOODLE_TOKEN")
+    assert m.call("tool_mobile_get_public_config")["wwwroot"] == TAU_URL
 
 
 def test_ensure_site_identity_returns_nothing_on_success(m, mock):

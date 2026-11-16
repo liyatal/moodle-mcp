@@ -119,7 +119,53 @@ def test_html_to_text_removes_tags_and_attributes(m):
     assert "bold" in out
     assert "link" in out
     assert "<" not in out
-    assert "http://x.example" not in out
+    assert "link (http://x.example/p)" in out  # a visible link keeps its target, as `text (url)`
+
+
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        ('<a href="https://x.example/p">here</a>', "here (https://x.example/p)"),
+        ('<a href="HTTPS://x.example/p">here</a>', "here (HTTPS://x.example/p)"),
+        ('<a href="/relative/path">here</a>', "here"),
+        ('<a href="relative.html">here</a>', "here"),
+        ('<a href="//evil.example/x">here</a>', "here"),
+        ('<a href="javascript:alert(1)">here</a>', "here"),
+        ('<a href=" JavaScript:alert(1)">here</a>', "here"),
+        ('<a href="data:text/html;base64,AAAA">here</a>', "here"),
+        ('<a href="mailto:a@b.example">here</a>', "here"),
+        ('<a href="https://x.example/p">https://x.example/p</a>', "https://x.example/p"),
+        ('<a href="https://x.example/p"> https://x.example/p </a>', "https://x.example/p"),
+        ("<a>no href</a>", "no href"),
+        ('<a href="">empty</a>', "empty"),
+        ('<a href="https://x.example/a b">space</a>', "space"),
+        ('<a href="https://x.example/a\x07b">ctl</a>', "ctl"),
+    ],
+)
+def test_html_links_render_as_text_and_url_only_for_absolute_http(m, html, expected):
+    assert m.html_to_text(html) == expected
+
+
+def test_html_link_longer_than_200_chars_is_ignored(m):
+    long_url = "https://x.example/" + "a" * 183  # 201 chars
+    assert len(long_url) == 201
+    assert m.html_to_text(f'<a href="{long_url}">here</a>') == "here"
+    ok_url = "https://x.example/" + "a" * 182  # exactly 200
+    assert m.html_to_text(f'<a href="{ok_url}">here</a>') == f"here ({ok_url})"
+
+
+def test_html_link_inside_hidden_content_is_dropped_entirely(m):
+    html = '<div hidden><a href="https://evil.example/x">click</a></div>ok'
+    out = m.html_to_text(html)
+    assert out == "ok"
+    assert "evil" not in out
+    html = '<a style="display:none" href="https://evil.example/x">click</a>ok'
+    assert m.html_to_text(html) == "ok"
+
+
+def test_html_link_inside_untrusted_stays_inside_the_fence(m):
+    out = m.untrusted('<a href="https://x.example/p">here</a>', "forum.message", html=True)
+    assert unwrap(out)[1] == "here (https://x.example/p)"
 
 
 @pytest.mark.parametrize(

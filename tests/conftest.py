@@ -39,9 +39,10 @@ def _env(monkeypatch, tmp_path):
 
 def _reset_state(module) -> None:
     module._userid = None
-    preflight_cache = getattr(module, "_preflight_ok", None)
-    if preflight_cache is not None:
-        preflight_cache.clear()
+    for name in ("_preflight_ok", "_skip_warned", "_announced", "_perm_warned"):
+        cache = getattr(module, name, None)  # once-per-process memory of the module
+        if cache is not None:
+            cache.clear()
 
 
 @pytest.fixture(autouse=True)
