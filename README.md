@@ -35,7 +35,7 @@
 
 משם Claude יוריד את הפרויקט, יתקין אותו, יבחר את המוסד שלכם ויחבר את השרת ל-Claude Code, וגם ל-Claude Desktop אם הוא מותקן אצלכם. בסוף הוא יבקש מכם דבר אחד: לשמור את ה-token בעצמכם (שלב 2 למטה). את ה-token לא מדביקים בצ'אט.
 
-**איפה זה עובד:** ב-Claude Code וב-Claude Desktop (מק, ווינדוס, לינוקס). השרת רץ על המחשב שלכם, ולכן הוא לא זמין באתר claude.ai ובאפליקציה בטלפון.
+**איפה זה עובד:** ב-Claude Code וב-Claude Desktop (מק וווינדוס). השרת רץ על המחשב שלכם, ולכן הוא לא זמין באתר claude.ai ובאפליקציה בטלפון.
 
 ## 🧰 מה הוא יודע לעשות
 
@@ -104,6 +104,12 @@ claude mcp add moodle -s user -e MOODLE_SITE=tau -- "$PWD/.venv/bin/python" "$PW
 macOS:    ~/Library/Application Support/Claude/claude_desktop_config.json
 Windows:  %APPDATA%\Claude\claude_desktop_config.json
 ```
+
+<div dir="rtl">
+
+וזה הבלוק שמוסיפים:
+
+</div>
 
 ```json
 {
