@@ -2,6 +2,10 @@
 
 **Talk to your Moodle.** A tiny [MCP](https://modelcontextprotocol.io) server that lets Claude read your courses, deadlines, grades and files — so you can ask instead of click.
 
+![moodle-mcp demo](demo/demo.gif)
+
+<sub>Demo uses sample data. [Full-quality video](demo/demo.mp4)</sub>
+
 > "What's due this week?"
 > "Download the new homework from Analog Circuits."
 > "Any announcements in Electromagnetic Fields?"
