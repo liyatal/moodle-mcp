@@ -64,7 +64,9 @@ python3 -m venv .venv
 
 ### 2. משיגים token
 
-ב-Moodle: תמונת הפרופיל ← **העדפות** ← **מפתחות אבטחה** ← מעתיקים את המפתח של *Moodle mobile web service*.
+ב-Moodle: תמונת הפרופיל ← **העדפות** ← **מפתחות אבטחה**. בשורה של *Moodle mobile web service* לוחצים על **איפוס** — רק אז מוצג המפתח המלא — ומעתיקים אותו.
+
+שימו לב: איפוס מבטל את המפתח הקודם, כך שאפליקציית Moodle בטלפון עשויה לבקש התחברות מחדש.
 
 כשהמפתח בלוח, מריצים בתיקיית הפרויקט:
 
@@ -178,7 +180,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-**Token:** in Moodle, profile picture → **Preferences** → **Security keys** → copy the key for *Moodle mobile web service*, then:
+**Token:** in Moodle, profile picture → **Preferences** → **Security keys**. On the *Moodle mobile web service* row click **Reset** — the full key is only shown after a reset — and copy it. (Resetting cancels the previous key, so the Moodle phone app may ask you to log in again.) Then:
 
 ```bash
 pbpaste > .token && chmod 600 .token
@@ -204,7 +206,7 @@ If a user gave you this repository and asked you to install it, do this:
 2. Map the institution the user named to a key: run `.venv/bin/python moodle_mcp.py --sites`. If it isn't listed, ask the user for their Moodle address and use `MOODLE_URL` instead of `MOODLE_SITE`.
 3. Register the server with absolute paths:
    `claude mcp add moodle -s user -e MOODLE_SITE=<key> -- <repo>/.venv/bin/python <repo>/moodle_mcp.py`
-4. **Do not ask for the token in chat and do not read `.token`.** Tell the user to copy their key from Moodle (Preferences → Security keys) and run `pbpaste > <repo>/.token && chmod 600 <repo>/.token` themselves. On Windows/Linux, have them save it to that file with their own editor.
+4. **Do not ask for the token in chat and do not read `.token`.** Tell the user to get their key from Moodle (Preferences → Security keys → click **Reset** on the *Moodle mobile web service* row to reveal the full key, then copy it) and run `pbpaste > <repo>/.token && chmod 600 <repo>/.token` themselves. On Windows/Linux, have them save it to that file with their own editor.
 5. After they confirm, verify with `MOODLE_SITE=<key> .venv/bin/python -c "import moodle_mcp as m; print(len(m.list_courses()), 'courses')"`, then tell them to start a new session so the tools load.
 6. If verification fails with `invalidtoken` or a web-service error, say so plainly: their institution may not issue tokens to students. Do not try to obtain a token another way.
 
