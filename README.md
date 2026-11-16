@@ -28,12 +28,12 @@
 </div>
 
 ```text
-תתקין לי את https://github.com/raztassa2000-eng/moodle-mcp — אני לומד בטכניון
+אני לומד בטכניון, תתקין לי את https://github.com/raztassa2000-eng/moodle-mcp
 ```
 
 <div dir="rtl">
 
-Claude יוריד את הפרויקט, יתקין אותו, יבחר את המוסד שלכם ויחבר את השרת. בסוף הוא יבקש מכם דבר אחד: לשמור את ה-token בעצמכם (שלב 2 למטה). את ה-token לא מדביקים בצ'אט.
+משם Claude יוריד את הפרויקט, יתקין אותו, יבחר את המוסד שלכם ויחבר את השרת. בסוף הוא יבקש מכם דבר אחד: לשמור את ה-token בעצמכם (שלב 2 למטה). את ה-token לא מדביקים בצ'אט.
 
 ## 🧰 מה הוא יודע לעשות
 
@@ -80,7 +80,7 @@ pbpaste > .token && chmod 600 .token
 
 ### 3. מחברים ל-Claude
 
-**Claude Code** (מחליפים את `tau` במפתח של המוסד שלכם):
+ב-**Claude Code** (מחליפים את `tau` במפתח של המוסד שלכם):
 
 </div>
 
@@ -90,7 +90,7 @@ claude mcp add moodle -s user -e MOODLE_SITE=tau -- "$PWD/.venv/bin/python" "$PW
 
 <div dir="rtl">
 
-**Claude Desktop** — מוסיפים ל-`claude_desktop_config.json` ומפעילים מחדש את האפליקציה:
+ב-**Claude Desktop** מוסיפים ל-`claude_desktop_config.json` ומפעילים מחדש את האפליקציה:
 
 </div>
 
