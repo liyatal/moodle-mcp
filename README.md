@@ -25,7 +25,7 @@ Read-only by design: it never submits, posts or changes anything.
 ## 🚀 Setup
 
 ```bash
-git clone https://github.com/<you>/moodle-mcp.git
+git clone https://github.com/raztassa2000-eng/moodle-mcp.git
 cd moodle-mcp
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
