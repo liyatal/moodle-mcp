@@ -39,7 +39,7 @@ The token is the Moodle mobile web service token. It carries whatever the Moodle
 | Download hardening | Only the configured host and path prefix, no redirects, safe file names (capped at 240 UTF-8 bytes), `;` and double-encoded dots in the path refused, no overwrite, no escape from the download folder, size cap (`MOODLE_MAX_DOWNLOAD_MB`), 120 s deadline. JSON files can be downloaded; a Moodle error reply is told apart from a genuine `.json` file | Downloaded files are untrusted content; the server does not scan them |
 | Response size caps | REST replies are capped at 10 MiB, the identity preflight at 64 KiB | Limits memory abuse by a hostile host, nothing more |
 | Token-less public config | The public-config call (`tool_mobile_get_public_config`) never sends the token | Only protects that one call |
-| Result limits | Caps on items, text length and number of calls per tool. A capped list ends with `{"truncated": "N of M shown"}`; ask for a narrower query (e.g. one course) | Limits blast radius, not intent |
+| Result limits | Caps on items, text length and number of calls per tool. A capped list ends with `{"truncated": "<shown> of <total> <what> shown"}`; ask for a narrower query (e.g. one course) | Limits blast radius, not intent |
 | Worker threads | Tools run in worker threads, so a slow Moodle or download cannot freeze the server | Availability only |
 
 ## Code layout
