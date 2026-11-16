@@ -152,7 +152,7 @@ def test_course_updates_caps_items(m, mock):
     mock.on("core_course_get_updates_since", _updates(*[_inst(i, _upd()) for i in range(1, 91)]))
     result = m.course_updates(7)
     assert len(result) == m.MAX_ITEMS + 1
-    assert result[-1] == {"truncated": "50 of 90 shown"}
+    assert result[-1] == {"truncated": "50 of 90 activities shown"}
 
 
 @pytest.mark.parametrize("bad", [0, -1, "7", None, 1.5, True, False, [7]])
@@ -257,7 +257,8 @@ def test_forum_posts_message_truncated(m, mock):
     mock.on("mod_forum_get_discussion_posts", _posts(_post(1, message="y" * 9000)))
     (item,) = m.forum_posts(55)
     _, inner = unwrap(item["message"])
-    assert len(inner) <= m.MAX_TEXT + 20
+    assert inner.endswith("…[truncated: 8000 of 9000 chars]")
+    assert len(inner) <= m.MAX_POST_TEXT + 40
 
 
 def test_forum_posts_prompt_injection_stays_in_fence(m, mock):
@@ -306,7 +307,7 @@ def test_forum_posts_caps_with_marker(m, mock):
     mock.on("mod_forum_get_discussion_posts", _posts(*[_post(i) for i in range(1, 61)]))
     result = m.forum_posts(55, limit=50)
     assert len(result) == m.MAX_ITEMS + 1
-    assert result[-1] == {"truncated": "50 of 60 shown"}
+    assert result[-1] == {"truncated": "50 of 60 posts shown"}
 
 
 def test_forum_posts_limit_caps_output(m, mock):
@@ -314,7 +315,7 @@ def test_forum_posts_limit_caps_output(m, mock):
     result = m.forum_posts(55, limit=3)
     posts = [r for r in result if "truncated" not in r]
     assert [p["id"] for p in posts] == [1, 2, 3]
-    assert result[-1] == {"truncated": "3 of 10 shown"}
+    assert result[-1] == {"truncated": "3 of 10 posts shown"}
 
 
 @pytest.mark.parametrize("bad", [0, -1, "5", None, 1.5, True, False])

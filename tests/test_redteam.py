@@ -224,7 +224,7 @@ def test_course_contents_total_output_is_bounded(m, mock):
     files_shown = [f for x in modules for f in x["files"] if "filename" in f]
     assert len(modules) == m.MAX_MODULES_TOTAL
     assert len(files_shown) == m.MAX_FILES_TOTAL
-    assert out[-1] == {"truncated": f"{len(shown)} of 8 shown"}
+    assert out[-1] == {"truncated": f"{len(shown)} of 8 sections shown (output limit reached)"}
 
 
 # ---------------------------------------------------------------------------- download flow

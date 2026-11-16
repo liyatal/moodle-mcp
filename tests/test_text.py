@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 
 import pytest
 
 from support import CLOSE_TAG, unwrap
 
-SUFFIX = "…[truncated]"
+MARKER = re.compile(r"…\[truncated: (\d+) of (\d+) chars\]\Z")
+MARKER_MAX = 40  # the marker for any realistic total stays under this length
+
+
+def _cut(out: str) -> tuple[str, int, int]:
+    """(kept text, kept count, total) of a truncated string; fails if there is no marker."""
+    match = MARKER.search(out)
+    assert match, f"no truncation marker in {out[-60:]!r}"
+    kept = out[: match.start()]
+    assert int(match.group(1)) == len(kept)
+    return kept, int(match.group(1)), int(match.group(2))
+
 
 # ------------------------------------------------------------------------------- clean_text
 
@@ -81,21 +93,66 @@ def test_clean_text_collapses_blank_lines(m, raw, expected):
 
 def test_clean_text_truncates_with_marker(m):
     out = m.clean_text("x" * 500, limit=100)
-    assert out.endswith(SUFFIX)
-    assert out.startswith("x" * 80)
-    assert len(out) <= 100 + len(SUFFIX)
-    assert "x" * 500 not in out
+    assert out == "x" * 100 + "…[truncated: 100 of 500 chars]"
+    assert len(out) <= 100 + MARKER_MAX
 
 
 def test_clean_text_at_limit_is_not_truncated(m):
     assert m.clean_text("x" * 100, limit=100) == "x" * 100
-    assert m.clean_text("x" * 101, limit=100).endswith(SUFFIX)
+    assert _cut(m.clean_text("x" * 101, limit=100))[1:] == (100, 101)
 
 
 def test_clean_text_default_limit_is_max_text(m):
     assert m.MAX_TEXT == 1500
     assert m.clean_text("x" * m.MAX_TEXT) == "x" * m.MAX_TEXT
-    assert m.clean_text("x" * (m.MAX_TEXT + 1)).endswith(SUFFIX)
+    assert _cut(m.clean_text("x" * (m.MAX_TEXT + 1)))[1:] == (m.MAX_TEXT, m.MAX_TEXT + 1)
+
+
+def test_clean_text_does_not_cut_mid_word(m):
+    text = "alpha beta gamma delta " * 20  # 460 chars
+    kept, n, total = _cut(m.clean_text(text, limit=100))
+    assert total == len(text)
+    assert text.startswith(kept)
+    assert text[len(kept)] == " "  # cut at a word boundary
+    assert 100 - 40 <= n <= 100
+    assert kept == "alpha beta gamma delta " * 4 + "alpha"
+
+
+def test_clean_text_cut_on_whitespace_keeps_the_whole_last_word(m):
+    # the limit lands exactly on a space: nothing to back up
+    assert _cut(m.clean_text("abcd " * 10, limit=9))[0] == "abcd abcd"
+    assert _cut(m.clean_text("abcd " * 10, limit=10))[0] == "abcd abcd"
+
+
+def test_clean_text_backs_up_at_most_word_backoff_chars(m):
+    # the only space is 60 chars before the limit: too far, so cut mid-word at the limit
+    text = "a" * 40 + " " + "b" * 200
+    kept, n, total = _cut(m.clean_text(text, limit=100))
+    assert (n, total) == (100, len(text))
+    assert kept == text[:100]
+    # a space just inside the 40-char window is used
+    text = "a" * 61 + " " + "b" * 200
+    assert _cut(m.clean_text(text, limit=100))[0] == "a" * 61
+
+
+def test_clean_text_marker_counts_after_cleaning(m):
+    raw = "a\x00" * 300 + "\n\n\n\n" + "b" * 10  # 300 controls dropped, blank lines squeezed
+    cleaned = "a" * 300 + "\n\n" + "b" * 10
+    kept, n, total = _cut(m.clean_text(raw, limit=100))
+    assert total == len(cleaned)
+    assert kept == "a" * 100
+
+
+def test_clean_text_truncation_never_keeps_only_whitespace(m):
+    kept, n, _ = _cut(m.clean_text(" " * 50 + "x" * 200, limit=60))
+    assert kept.strip()
+    assert n == len(kept)
+
+
+def test_clean_text_hebrew_words_are_not_split(m):
+    text = "שלום עולם " * 30
+    kept, _, _ = _cut(m.clean_text(text, limit=57))  # the limit lands inside a word
+    assert kept.split() == ["שלום", "עולם"] * 5 + ["שלום"]
 
 
 def test_clean_text_invisible_characters_do_not_count_against_limit(m):
@@ -376,16 +433,17 @@ def test_untrusted_removes_control_and_invisible_characters(m):
 def test_untrusted_truncates_inside_the_wrapper(m):
     out = m.untrusted("x" * 5000, "forum.message")
     _, inner = unwrap(out)
-    assert inner.endswith(SUFFIX)
-    assert len(inner) <= m.MAX_TEXT + len(SUFFIX)
+    assert _cut(inner)[1:] == (m.MAX_TEXT, 5000)
+    assert len(inner) <= m.MAX_TEXT + MARKER_MAX
 
 
 def test_untrusted_custom_limit(m):
     _, inner = unwrap(m.untrusted("x" * 500, "course.name", limit=m.MAX_NAME))
-    assert inner.endswith(SUFFIX)
-    assert len(inner) <= m.MAX_NAME + len(SUFFIX)
+    assert _cut(inner)[1:] == (m.MAX_NAME, 500)
+    assert len(inner) <= m.MAX_NAME + MARKER_MAX
 
 
 def test_limits_constants(m):
     assert (m.MAX_ITEMS, m.MAX_TEXT, m.MAX_NAME) == (50, 1500, 200)
+    assert m.MAX_POST_TEXT == 8000
     assert (m.MAX_ASSIGN_STATUS_CALLS, m.MAX_FORUMS) == (25, 10)

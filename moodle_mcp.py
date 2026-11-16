@@ -36,6 +36,7 @@ from moodle_safety import (
     MAX_FORUMS,
     MAX_ITEMS,
     MAX_NAME,
+    MAX_POST_TEXT,
     MAX_TEXT,
     ConfigError,
     check_download_url,
@@ -44,6 +45,7 @@ from moodle_safety import (
     is_write_function,
     safe_filename,
     safe_subfolder,
+    split_multilang_name,
     untrusted,
     validate_base_url,
 )
@@ -51,11 +53,12 @@ from moodle_safety import (
 # Contract names stay importable from moodle_mcp (tests do `import moodle_mcp as m`).
 # fmt: off
 __all__ = [
-    "MAX_ASSIGN_STATUS_CALLS", "MAX_FORUMS", "MAX_ITEMS", "MAX_NAME", "MAX_TEXT", "READ_FUNCTIONS",
+    "MAX_ASSIGN_STATUS_CALLS", "MAX_FORUMS", "MAX_ITEMS", "MAX_NAME", "MAX_POST_TEXT", "MAX_TEXT",
+    "READ_FUNCTIONS",
     "HIGH_RISK", "SITES", "ConfigError", "MoodleError", "assignments", "call", "check_download_url",
     "clean_text", "course_contents", "course_updates", "download_dir", "download_file",
     "ensure_site_identity", "fmt_time", "forum_discussions", "forum_posts", "get_base", "grades",
-    "html_to_text", "is_write_function",
+    "html_to_text", "is_write_function", "split_multilang_name",
     "list_courses", "main", "max_download_bytes", "safe_filename", "safe_subfolder", "scrub",
     "token", "untrusted", "upcoming_deadlines", "userid", "validate_base_url",
 ]
@@ -461,10 +464,11 @@ def _link(v) -> str | None:
     return None if bad else v
 
 
-def _capped(items: list, total: int) -> list:
-    """Append one visible marker when a cap cut the list."""
+def _capped(items: list, total: int, what: str, *, budget: bool = False) -> list:
+    """Append one visible marker saying what was cut when a cap cut the list."""
     if total > len(items):
-        items.append({"truncated": f"{len(items)} of {total} shown"})
+        why = " (output limit reached)" if budget else ""
+        items.append({"truncated": f"{len(items)} of {total} {what} shown{why}"})
     return items
 
 
@@ -486,13 +490,17 @@ def list_courses(include_past: bool = False) -> list[dict]:
         out.append(
             {
                 "id": _int(c.get("id")),
-                "name": untrusted(c.get("fullname"), "course.name", limit=MAX_NAME),
-                "shortname": untrusted(c.get("shortname"), "course.shortname", limit=MAX_NAME),
+                "name": untrusted(
+                    split_multilang_name(c.get("fullname")), "course.name", limit=MAX_NAME
+                ),
+                "shortname": untrusted(
+                    split_multilang_name(c.get("shortname")), "course.shortname", limit=MAX_NAME
+                ),
                 "progress": _num(c.get("progress")),
                 "ended": ended,
             }
         )
-    return _capped(out[:MAX_ITEMS], len(out))
+    return _capped(out[:MAX_ITEMS], len(out), "courses")
 
 
 @_tool
@@ -500,14 +508,17 @@ def course_contents(course_id: int) -> list[dict]:
     """Sections, activities and files of a course."""
     _int_arg(course_id, "course_id", 1)
     sections = _dicts(call("core_course_get_contents", courseid=course_id))
-    out, mods_left, files_left = [], MAX_MODULES_TOTAL, MAX_FILES_TOTAL
+    out, mods_left, files_left, out_of_budget = [], MAX_MODULES_TOTAL, MAX_FILES_TOTAL, False
     for s in sections[:MAX_ITEMS]:
         if mods_left <= 0:
+            out_of_budget = True
             break
         modules = _dicts(s.get("modules"))
+        mods_budget = mods_left < min(MAX_ITEMS, len(modules))  # the global budget cut it
         mods = []
         for m in modules[: min(MAX_ITEMS, mods_left)]:
             files = [f for f in _dicts(m.get("contents")) if f.get("type") == "file"]
+            files_budget = files_left < min(MAX_ITEMS, len(files))
             shown = files[: min(MAX_ITEMS, files_left)]
             files_left -= len(shown)
             entries = [
@@ -524,17 +535,17 @@ def course_contents(course_id: int) -> list[dict]:
                     "name": untrusted(m.get("name"), "module.name", limit=MAX_NAME),
                     "type": _word(m.get("modname")),
                     "url": _link(m.get("url")),
-                    "files": _capped(entries, len(files)),
+                    "files": _capped(entries, len(files), "files", budget=files_budget),
                 }
             )
         mods_left -= len(mods)
         out.append(
             {
                 "section": untrusted(s.get("name"), "section.name", limit=MAX_NAME),
-                "modules": _capped(mods, len(modules)),
+                "modules": _capped(mods, len(modules), "activities", budget=mods_budget),
             }
         )
-    return _capped(out, len(sections))
+    return _capped(out, len(sections), "sections", budget=out_of_budget)
 
 
 @_tool
@@ -559,7 +570,7 @@ def upcoming_deadlines(days: int = 14) -> list[dict]:
         }
         for e in events[:MAX_ITEMS]
     ]
-    return _capped(out, len(events))
+    return _capped(out, len(events), "deadlines")
 
 
 @_tool
@@ -592,10 +603,12 @@ def assignments(course_id: int) -> list[dict]:
                 "due": fmt_time(a.get("duedate")),
                 "cutoff": fmt_time(a.get("cutoffdate")),
                 "submission_status": status,
-                "files": _capped([_file(f) for f in attachments[:MAX_ITEMS]], len(attachments)),
+                "files": _capped(
+                    [_file(f) for f in attachments[:MAX_ITEMS]], len(attachments), "files"
+                ),
             }
         )
-    return _capped(out, len(items))
+    return _capped(out, len(items), "assignments")
 
 
 @_tool
@@ -616,12 +629,14 @@ def grades(course_id: int) -> list[dict]:
         }
         for i in items[:MAX_ITEMS]
     ]
-    return _capped(out, len(items))
+    return _capped(out, len(items), "grade items")
 
 
 @_tool
 def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
-    """Latest discussions in a course's forums (announcements included)."""
+    """Latest discussions in a course's forums (announcements included). Each message is
+    shortened (opening post only); forum_posts(discussion_id) returns the whole thread with the
+    full text (up to 8000 chars per post)."""
     _int_arg(course_id, "course_id", 1)
     _int_arg(limit, "limit", 1, 50)
     forums = _dicts(call("mod_forum_get_forums_by_courses", courseids=[course_id]))
@@ -647,15 +662,16 @@ def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
             )
     shown = out[:MAX_ITEMS]
     if unread_forums:  # forums past the cap were not read, so the total is a lower bound
-        shown.append({"truncated": f"{len(shown)} of {len(out)}+ shown"})
+        shown.append({"truncated": f"{len(shown)} of {len(out)}+ discussions shown"})
         return shown
-    return _capped(shown, len(out))
+    return _capped(shown, len(out), "discussions")
 
 
 @_tool
 def forum_posts(discussion_id: int, limit: int = 20) -> list[dict]:
-    """Posts (opening post and replies, oldest first) of one forum discussion; the
-    discussion_id comes from forum_discussions."""
+    """The whole thread of one forum discussion: opening post and replies, oldest first, each
+    with its full text (up to 8000 chars per post). The discussion_id comes from
+    forum_discussions."""
     _int_arg(discussion_id, "discussion_id", 1)
     _int_arg(limit, "limit", 1, 50)
     res = call(
@@ -672,11 +688,13 @@ def forum_posts(discussion_id: int, limit: int = 20) -> list[dict]:
             "subject": untrusted(p.get("subject"), "post.subject", limit=MAX_NAME),
             "author": untrusted(_sub(p, "author").get("fullname"), "post.author", limit=MAX_NAME),
             "posted": fmt_time(p.get("timecreated")),
-            "message": untrusted(p.get("message") or "", "post.message", html=True),
+            "message": untrusted(
+                p.get("message") or "", "post.message", html=True, limit=MAX_POST_TEXT
+            ),
         }
         for p in posts[:limit]
     ]
-    return _capped(out, len(posts))
+    return _capped(out, len(posts), "posts")
 
 
 _AREA_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")  # update area names are PARAM_ALPHANUMEXT
@@ -690,7 +708,8 @@ def _area(v) -> str | None:
 @_tool
 def course_updates(course_id: int, since_days: int = 7) -> list[dict]:
     """What changed in a course recently: activities with new or updated content, files,
-    grades, comments... in the last N days (1-90)."""
+    grades, comments... in the last N days (1-90). Each update has an area ("what"), a "count"
+    and "when"; "when" is null for areas where Moodle reports only a count, not a time."""
     _int_arg(course_id, "course_id", 1)
     _int_arg(since_days, "since_days", 1, 90)
     since = int(time.time()) - since_days * 86400
@@ -726,10 +745,10 @@ def course_updates(course_id: int, since_days: int = 7) -> list[dict]:
                 "id": cmid,
                 "type": _word(mod.get("modname")),
                 "name": untrusted(mod.get("name"), "module.name", limit=MAX_NAME),
-                "updates": _capped(entries, len(updates)),
+                "updates": _capped(entries, len(updates), "updates"),
             }
         )
-    return _capped(out, len(instances))
+    return _capped(out, len(instances), "activities")
 
 
 _SAVE_ERROR = "Could not save the file (disk or path problem)."

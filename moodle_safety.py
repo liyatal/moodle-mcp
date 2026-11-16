@@ -13,6 +13,8 @@ from urllib.parse import unquote, urlsplit
 
 MAX_ITEMS = 50
 MAX_TEXT = 1500
+MAX_POST_TEXT = 8000  # forum_posts message: the whole post, not a preview
+WORD_BACKOFF = 40  # clean_text backs up this far to avoid cutting a word in half
 MAX_NAME = 200
 MAX_ASSIGN_STATUS_CALLS = 25
 MAX_FORUMS = 10
@@ -20,6 +22,7 @@ MAX_HTML_CHARS = 200_000  # html_to_text reads at most this much input
 MAX_HTML_DEPTH = 200  # and stops at this element nesting depth
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_COURSE_CODE_RE = re.compile(r"\d{6,} - ", re.ASCII)
 _HOST_RE = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*")
 
 
@@ -90,7 +93,36 @@ def clean_text(s, limit: int = MAX_TEXT) -> str:
         or (unicodedata.category(c) not in ("Cc", "Cf", "Cs") and c not in _INVISIBLE)
     )
     s = re.sub(r"\n{3,}", "\n\n", s)
-    return s[:limit] + "…[truncated]" if len(s) > limit else s
+    if len(s) <= limit:
+        return s
+    cut = limit
+    if limit > 0 and not (s[limit].isspace() or s[limit - 1].isspace()):
+        # don't cut mid-word: back up to the last whitespace within the final WORD_BACKOFF chars
+        window = s[max(0, limit - WORD_BACKOFF) : limit]
+        ws = max((i for i, c in enumerate(window) if c.isspace()), default=-1)
+        if ws >= 0:
+            cut = limit - len(window) + ws
+    kept = s[:cut].rstrip() or s[:limit]
+    return f"{kept}…[truncated: {len(kept)} of {len(s)} chars]"
+
+
+def split_multilang_name(name):
+    """Put ' / ' between the two language versions of a course name Moodle glued together.
+
+    '123456 - Hebrew, 2025123456 - English, 2025' -> '123456 - Hebrew, 2025 / 123456 - English,
+    2025': only when the name starts with a code of 6+ digits and ' - ', and that same prefix
+    appears exactly once more. Anything else (or a non-string) comes back unchanged.
+    """
+    if not isinstance(name, str):
+        return name
+    m = _COURSE_CODE_RE.match(name)
+    if not m:
+        return name
+    prefix = m.group(0)
+    second = name.find(prefix, len(prefix))
+    if second < 0 or name.find(prefix, second + 1) >= 0:
+        return name
+    return f"{name[:second].rstrip()} / {name[second:]}"
 
 
 class _TooDeep(Exception):

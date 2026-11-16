@@ -51,7 +51,7 @@ Claude יציג לכם קודם את הפקודות, יבקש שתאשרו את 
 | `course_updates` | מה השתנה בקורס בימים האחרונים (קבצים, פעילויות, ציונים), עם שמות הפעילויות |
 | `download_file` | שמירת קובץ מהקורס ל-`~/Downloads/moodle` (גם קבצי JSON) |
 
-רשימות ארוכות נחתכות (עד 50 פריטים), ובסוף הרשימה מופיע פריט `{"truncated": "N of M shown"}`. כשרואים אותו, מבקשים שאילתה צרה יותר, למשל קורס אחד. הכלים רצים ב-thread נפרד, כך שהורדה איטית לא מקפיאה את Claude.
+רשימות ארוכות נחתכות (עד 50 פריטים), ובסוף הרשימה מופיע פריט שאומר מה נחתך, למשל `{"truncated": "50 of 80 courses shown"}`. טקסט ארוך נחתך בסוף מילה ומסומן `…[truncated: 1500 of 4200 chars]`; `forum_posts` מחזיר הודעה מלאה עד 8000 תווים. ב-`course_updates` השדה `when` לפעמים ריק (`null`), כי עבור חלק מסוגי העדכונים Moodle מדווח רק כמה פריטים השתנו, בלי זמן. כשרואים סימון חיתוך ברשימה, מבקשים שאילתה צרה יותר, למשל קורס אחד. הכלים רצים ב-thread נפרד, כך שהורדה איטית לא מקפיאה את Claude.
 
 ## 🚀 התקנה ידנית
 
@@ -377,7 +377,7 @@ $env:MOODLE_SITE = "tau"; .venv\Scripts\python moodle_mcp.py --doctor
 
 `--doctor` checks, in order: the base URL is valid and https; a token exists and has the right format (on macOS/Linux, that the file isn't readable by others); the site identifies itself as the Moodle you configured; the token works; and which write-capable functions your token grants (a warning, not a failure — see [Security](#-security)). It prints only the host, the Moodle release and a function count — never the token, your name, user ids or course data — and ends with `doctor: N ok, M warn, K fail` (exit code 1 on any `FAIL`). It does make real requests to your Moodle. An unknown argument (e.g. `--help`) exits with code 2 and a usage line.
 
-**Using it:** long lists are capped (50 items) and end with a `{"truncated": "N of M shown"}` entry; when you see it, ask for a narrower query, e.g. a single course. Tools run in worker threads, so a slow download doesn't freeze the assistant. JSON files can be downloaded too.
+**Using it:** long lists are capped (50 items) and end with an entry saying what was cut, e.g. `{"truncated": "50 of 80 courses shown"}`. Long text is cut at a word boundary and marked `…[truncated: 1500 of 4200 chars]`; `forum_posts` returns a post in full up to 8000 characters. In `course_updates`, `when` is often `null`: for some update areas Moodle reports only a count, not a time. When you see a truncation marker on a list, ask for a narrower query, e.g. a single course. Tools run in worker threads, so a slow download doesn't freeze the assistant. JSON files can be downloaded too.
 
 Run `.venv/bin/python moodle_mcp.py --sites` (Windows: `.venv\Scripts\python moodle_mcp.py --sites`) for the full list of institutions with names and URLs; for anything not listed, set `MOODLE_URL` (https only).
 
