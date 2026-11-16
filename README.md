@@ -2,6 +2,8 @@
 
 **Talk to your Moodle.** A tiny [MCP](https://modelcontextprotocol.io) server that lets Claude read your courses, deadlines, grades and files — so you can ask instead of click.
 
+[🇮🇱 הוראות בעברית](#hebrew)
+
 ![moodle-mcp demo](demo/demo.gif)
 
 <sub>Demo uses sample data. [Full-quality video](demo/demo.mp4)</sub>
@@ -82,6 +84,68 @@ claude mcp add moodle -s user -- "$PWD/.venv/bin/python" "$PWD/moodle_mcp.py"
 - Your token is as good as your password for reading Moodle. Keep it out of git and chats.
 - The token is only ever sent to the configured Moodle host — downloads from any other host are refused.
 - Downloads can't escape the download directory.
+
+<a name="hebrew"></a>
+
+## 🇮🇱 הוראות בעברית
+
+<div dir="rtl">
+
+**מדברים עם ה-Moodle.** שרת MCP קטן שנותן ל-Claude לקרוא את הקורסים, המטלות, הציונים והקבצים שלכם — שואלים במקום ללחוץ. הוא לקריאה בלבד: לא מגיש, לא מפרסם ולא משנה שום דבר.
+
+### 1. התקנה
+
+</div>
+
+```bash
+git clone https://github.com/raztassa2000-eng/moodle-mcp.git
+cd moodle-mcp
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+<div dir="rtl">
+
+### 2. השגת token
+
+ב-Moodle: תמונת הפרופיל ← **העדפות** ← **מפתחות אבטחה** ← מעתיקים את המפתח של *Moodle mobile web service*.
+
+כשהמפתח בלוח, מריצים בתיקיית הפרויקט:
+
+</div>
+
+```bash
+pbpaste > .token && chmod 600 .token
+```
+
+<div dir="rtl">
+
+הקובץ `.token` לא נכנס ל-git. ה-token שווה ערך לסיסמה לקריאת ה-Moodle שלכם — לא משתפים אותו.
+
+### 3. חיבור ל-Claude
+
+**Claude Code:**
+
+</div>
+
+```bash
+claude mcp add moodle -s user -- "$PWD/.venv/bin/python" "$PWD/moodle_mcp.py"
+```
+
+<div dir="rtl">
+
+**Claude Desktop:** מוסיפים את הבלוק `mcpServers` שמופיע למעלה לקובץ `claude_desktop_config.json` (עם הנתיב המלא לתיקייה), ומפעילים מחדש את האפליקציה.
+
+### 4. שואלים
+
+- "מה יש לי להגיש השבוע?"
+- "תוריד לי את שיעורי הבית החדשים במעגלים אנלוגיים"
+- "יש הודעות חדשות מהמרצים?"
+- "תסביר לי את הפרויקט החדש במבנה המחשב"
+
+נבנה עבור Moodle של אוניברסיטת תל אביב. כדי לעבוד מול Moodle אחר, מגדירים את משתנה הסביבה `MOODLE_URL`.
+
+</div>
 
 ---
 
