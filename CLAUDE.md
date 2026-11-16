@@ -42,7 +42,7 @@ Add its Moodle function to `READ_FUNCTIONS`; wrap/clean every returned third-par
 
 ## Testing seams
 
-Tests swap `moodle_mcp._client` for `httpx.Client(transport=httpx.MockTransport(...))` and reset `_userid`, `_preflight_ok`, `_announced`, `_perm_warned` (autouse fixture in `tests/conftest.py`; Moodle mock helper in `tests/support.py`). Fake token: `a1b2c3d4e5f60718293a4b5c6d7e8f90`. `tests/test_redteam.py` pins attacks found by an adversarial review (one documented strict xfail: misnested end tags inside hidden HTML). Live tests are marked `live` and skipped unless `MOODLE_LIVE=1`.
+Tests swap `moodle_mcp._client` for `httpx.Client(transport=httpx.MockTransport(...))` and reset `_userid`, `_preflight_ok`, `_announced`, `_perm_warned` (autouse fixture in `tests/conftest.py`; Moodle mock helper in `tests/support.py`). Fake token: `a1b2c3d4e5f60718293a4b5c6d7e8f90`. `tests/test_redteam.py` pins attacks found by an adversarial review (one documented strict xfail: misnested end tags inside hidden HTML). Live tests are marked `live` and skipped unless `MOODLE_LIVE=1`: `tests/test_live.py` is token-less; `tests/test_live_token.py` needs the real token in `.token` (or `MOODLE_LIVE_TOKEN_FILE`), only reads, and asserts types/keys/shapes (never content, so a failure does not print personal data): `MOODLE_LIVE=1 .venv/Scripts/python -m pytest -m live -q`. Never open the token file from a test: point `MOODLE_TOKEN_FILE` at it.
 
 ## Repo notes
 

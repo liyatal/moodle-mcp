@@ -284,7 +284,7 @@ python scripts/check_sites.py   # yearly check that institution hosts are live (
 
 מבנה הקוד: `moodle_mcp.py` הוא השרת, ו-`moodle_safety.py` מחזיק את הבדיקות הטהורות (אימות כתובות, ניקוי ומעטפת לטקסט, בדיקת כתובות ושמות קבצים להורדה, זיהוי פונקציות כתיבה), בלי רשת, token או משתני סביבה. `moodle_mcp` מייבא ממנו ומייצא אותו מחדש. ההתקנה משכפלת את כל המאגר, כך שבשבילכם דבר לא משתנה.
 
-חבילת הבדיקות כוללת כאלף בדיקות, כולן offline (בלי רשת ובלי token אמיתי), וביניהן קובץ red-team עם תקיפות לדוגמה. מריצים אותן עם `pytest`, ואת הלינטר עם `ruff check .`.
+חבילת הבדיקות כוללת כאלף בדיקות, כולן offline (בלי רשת ובלי token אמיתי), וביניהן קובץ red-team עם תקיפות לדוגמה. מריצים אותן עם `pytest`, ואת הלינטר עם `ruff check .`. בנוסף יש בדיקות חיות, לקריאה בלבד, מול Moodle אמיתי: שומרים את ה-token ב-`.token` ומריצים `MOODLE_LIVE=1 pytest -m live`. הן בודקות סוגים ומבנים בלבד ולא מדפיסות שמות, ציונים או הודעות.
 
 </div>
 
@@ -431,7 +431,7 @@ python scripts/check_sites.py   # yearly check that institution hosts are live (
 
 Code layout: `moodle_mcp.py` is the server; `moodle_safety.py` holds the pure checks (URL validation, untrusted-text cleaning and fencing, download URL and file name checks, the write-function heuristic) with no network, token or environment access, and `moodle_mcp` re-exports them. Installing clones the whole repo, so nothing changes for users.
 
-The suite is about 1000 offline tests (no network, no real token), including a red-team file of attack cases. Run `pytest`; lint with `ruff check .`.
+The suite is about 1000 offline tests (no network, no real token), including a red-team file of attack cases. Run `pytest`; lint with `ruff check .`. Read-only live tests against a real Moodle are skipped by default: save your token as `.token` and run `MOODLE_LIVE=1 pytest -m live`. They assert types and shapes only and never print names, grades or messages.
 
 ---
 
