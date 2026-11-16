@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import datetime as dt
 import functools
+import inspect
 import itertools
 import json
 import logging
@@ -420,7 +421,9 @@ def _tool(fn):
     async def in_thread(*args, **kwargs):
         return await asyncio.to_thread(fn, *args, **kwargs)
 
-    mcp.tool()(in_thread)
+    # getdoc() removes the source indentation: Python < 3.13 keeps it in __doc__, so the
+    # description the model sees would otherwise differ between Python versions
+    mcp.tool(description=inspect.getdoc(fn))(in_thread)
     return fn
 
 
