@@ -25,6 +25,8 @@ TOOLS = {
     "assignments",
     "grades",
     "forum_discussions",
+    "course_updates",
+    "forum_posts",
     "download_file",
 }
 
@@ -113,7 +115,7 @@ def test_server_never_writes_the_token_to_stdout(session):
     assert all(FAKE_TOKEN not in line for line in session["session"].raw)
 
 
-def test_tools_list_has_exactly_the_seven_tools(session):
+def test_tools_list_has_exactly_the_nine_tools(session):
     names = {t["name"] for t in session["tools"]["result"]["tools"]}
     assert names == TOOLS
 

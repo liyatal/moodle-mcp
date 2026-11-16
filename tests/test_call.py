@@ -21,6 +21,8 @@ EXPECTED_READ_FUNCTIONS = {
     "gradereport_user_get_grade_items",
     "mod_forum_get_forums_by_courses",
     "mod_forum_get_forum_discussions",
+    "core_course_get_updates_since",
+    "mod_forum_get_discussion_posts",
     "tool_mobile_get_public_config",
 }
 

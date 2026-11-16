@@ -439,6 +439,8 @@ EXPECTED_SCHEMA = {
     "assignments": ({"course_id"}, {"course_id"}),
     "grades": ({"course_id"}, {"course_id"}),
     "forum_discussions": ({"course_id", "limit"}, {"course_id"}),
+    "course_updates": ({"course_id", "since_days"}, {"course_id"}),
+    "forum_posts": ({"discussion_id", "limit"}, {"discussion_id"}),
     "download_file": ({"fileurl", "subfolder"}, {"fileurl"}),
 }
 

@@ -582,6 +582,7 @@ def test_grades_caps_items(m, mock):
 def _discussion(i: int, **over) -> dict:
     data = {
         "id": i,
+        "discussion": 500 + i,
         "name": f"Topic {i}",
         "subject": f"Topic {i}",
         "userfullname": "Prof. Cohen",
@@ -609,6 +610,7 @@ def test_forum_discussions_shape(m, mock):
     assert fields["perpage"] == "5"
     assert len(result) == 2
     first = result[0]
+    assert first["discussion_id"] == 501
     assert unwrap(first["forum"])[1] == "Forum 0"
     assert unwrap(first["subject"])[1] == "Topic 1"
     assert unwrap(first["author"])[1] == "Prof. Cohen"
@@ -668,6 +670,16 @@ def test_forum_discussions_hostile_and_missing_fields(m, mock):
     assert_hostile_contained(result[0]["subject"])
     assert_hostile_contained(result[0]["author"])
     assert_hostile_contained(result[0]["message"])
+
+
+@pytest.mark.parametrize("bad", [None, "x", "5", 1.5, True, [1], {"a": 1}])
+def test_forum_discussions_discussion_id_none_when_missing_or_not_int(m, mock, bad):
+    mock.on("mod_forum_get_forums_by_courses", _forums(1))
+    item = _discussion(1, discussion=bad)
+    mock.on("mod_forum_get_forum_discussions", {"discussions": [item, {"id": 2}]})
+    first, second = m.forum_discussions(7)
+    assert first["discussion_id"] is None
+    assert second["discussion_id"] is None
 
 
 def test_forum_discussions_limits_forums(m, mock):
