@@ -12,7 +12,7 @@
 > "Download the new homework from Analog Circuits."
 > "Any announcements in Electromagnetic Fields?"
 
-Built for Tel Aviv University's Moodle, works with any Moodle that has the mobile web service enabled.
+Built at Tel Aviv University, with presets for 37 Israeli universities and colleges — and it works with any other Moodle that hands out a web service token.
 
 ## 🧰 Tools
 
@@ -70,11 +70,34 @@ claude mcp add moodle -s user -- "$PWD/.venv/bin/python" "$PWD/moodle_mcp.py"
 }
 ```
 
+## 🏫 Pick your institution
+
+TAU is the default. For anywhere else, set `MOODLE_SITE` to one of these keys:
+
+| | Keys |
+| --- | --- |
+| **Universities** | `tau` · `technion` · `bgu` · `ariel` · `openu` |
+| **Engineering, design & general colleges** | `hit` · `sce` · `braude` · `azrieli` · `jct` · `shenkar` · `bezalel` · `jamd` · `mta` · `colman` · `ruppin` · `kinneret` · `wgalil` · `achva` · `zefat` · `schechter` |
+| **Colleges of education** | `smkb` · `levinsky` · `wingate` · `beitberl` · `oranim` · `dyellin` · `kaye` · `washington` · `talpiot` · `shaanan` · `orot` · `efrata` · `hemdat` · `sakhnin` · `qsm` · `arabcol` |
+
+```bash
+claude mcp add moodle -s user -e MOODLE_SITE=technion -- "$PWD/.venv/bin/python" "$PWD/moodle_mcp.py"
+```
+
+In Claude Desktop, add `"env": { "MOODLE_SITE": "technion" }` to the server block. Run `.venv/bin/python moodle_mcp.py --sites` for full names and URLs.
+
+**Not on the list?** Hebrew University, Bar-Ilan, Haifa, Reichman, Afeka, Sapir, Tel-Hai and others sit behind a login wall or bot protection, so their address couldn't be checked automatically. Set `MOODLE_URL` to your Moodle's address instead — and open a PR to add it.
+
+Good to know:
+- All 37 sites were checked to be live Moodle sites (November 2026), but only TAU has been tested end to end with a real token. Whether you can get a token depends on your institution's settings.
+- Some institutions open a new Moodle every academic year (`moodle26…`, `moodle27…`), so those addresses will need a yearly update.
+
 ## ⚙️ Options
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MOODLE_URL` | `https://moodle.tau.ac.il` | Your Moodle site |
+| `MOODLE_SITE` | `tau` | Institution key from the list above |
+| `MOODLE_URL` | – | Any Moodle address (overrides `MOODLE_SITE`) |
 | `MOODLE_TOKEN` | – | Token (overrides the `.token` file) |
 | `MOODLE_TOKEN_FILE` | `.token` next to the script | Where to read the token from |
 | `MOODLE_DOWNLOAD_DIR` | `~/Downloads/moodle` | Where downloads go |
@@ -143,7 +166,19 @@ claude mcp add moodle -s user -- "$PWD/.venv/bin/python" "$PWD/moodle_mcp.py"
 - "יש הודעות חדשות מהמרצים?"
 - "תסביר לי את הפרויקט החדש במבנה המחשב"
 
-נבנה עבור Moodle של אוניברסיטת תל אביב. כדי לעבוד מול Moodle אחר, מגדירים את משתנה הסביבה `MOODLE_URL`.
+### לא לומדים בתל אביב?
+
+ברירת המחדל היא אוניברסיטת תל אביב. לכל מוסד אחר מגדירים את `MOODLE_SITE` לאחד מ-37 המפתחות שבטבלה "Pick your institution" למעלה (למשל `technion`, `bgu`, `hit`, `braude`, `smkb`):
+
+</div>
+
+```bash
+claude mcp add moodle -s user -e MOODLE_SITE=technion -- "$PWD/.venv/bin/python" "$PWD/moodle_mcp.py"
+```
+
+<div dir="rtl">
+
+המוסד שלכם לא ברשימה (למשל העברית, בר-אילן, חיפה, רייכמן, אפקה, ספיר)? מגדירים את `MOODLE_URL` לכתובת ה-Moodle שלכם. שימו לב: רק תל אביב נבדקה מקצה לקצה עם token אמיתי; בשאר המוסדות נבדק רק שאתר ה-Moodle פעיל.
 
 </div>
 

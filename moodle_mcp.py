@@ -1,5 +1,7 @@
 """
-Moodle MCP server for TAU Moodle (moodle.tau.ac.il).
+Moodle MCP server for Israeli universities and colleges (default: TAU).
+
+Site:  MOODLE_SITE=<key>  (see SITES below or run with --sites), or MOODLE_URL=<any Moodle>.
 
 Token lookup order:
     1. MOODLE_TOKEN environment variable
@@ -17,7 +19,56 @@ from urllib.parse import unquote, urlsplit
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-BASE = os.environ.get("MOODLE_URL", "https://moodle.tau.ac.il").rstrip("/")
+# Israeli institutions whose Moodle answered the public config endpoint (checked 2026-11).
+# Pick one with MOODLE_SITE=<key>; anything else works through MOODLE_URL.
+# Hosts with a year in the name (moodle26, moodle27...) move every academic year.
+SITES = {
+    # universities
+    "tau": ("Tel Aviv University", "https://moodle.tau.ac.il"),
+    "technion": ("Technion", "https://moodle26.technion.ac.il"),
+    "bgu": ("Ben-Gurion University", "https://moodle.bgu.ac.il/moodle"),
+    "ariel": ("Ariel University", "https://moodlearn.ariel.ac.il"),
+    "openu": ("The Open University", "https://opal.openu.ac.il"),
+    # engineering, design and general colleges
+    "hit": ("HIT Holon Institute of Technology", "https://md.hit.ac.il"),
+    "sce": ("SCE Sami Shamoon College of Engineering", "https://moodle.sce.ac.il"),
+    "braude": ("Braude College of Engineering", "https://moodle27.braude.ac.il"),
+    "azrieli": ("Azrieli College of Engineering Jerusalem", "https://moodle.jce.ac.il"),
+    "jct": ("Jerusalem College of Technology (Lev)", "https://moodle.jct.ac.il"),
+    "shenkar": ("Shenkar", "https://online.shenkar.ac.il"),
+    "bezalel": ("Bezalel Academy of Arts and Design", "https://moodle.bezalel.ac.il"),
+    "jamd": ("Jerusalem Academy of Music and Dance", "https://moodle.jamd.ac.il"),
+    "mta": ("Academic College of Tel Aviv-Yaffo", "https://mama.mta.ac.il"),
+    "colman": ("College of Management (Colman)", "https://moodle.colman.ac.il"),
+    "ruppin": ("Ruppin Academic Center", "https://moodle.ruppin.ac.il"),
+    "kinneret": ("Kinneret College", "https://moodle.kinneret.ac.il"),
+    "wgalil": ("Western Galilee College", "https://moodle.wgalil.ac.il"),
+    "achva": ("Achva Academic College", "https://moodle.achva.ac.il"),
+    "zefat": ("Zefat Academic College", "https://moodle.zefat.ac.il"),
+    "schechter": ("Schechter Institute", "https://moodle.schechter.ac.il"),
+    # colleges of education
+    "smkb": ("Kibbutzim College (Seminar HaKibbutzim)", "https://moodle26.smkb.ac.il"),
+    "levinsky": ("Levinsky College of Education", "https://moodle.levinsky.ac.il"),
+    "wingate": ("Levinsky-Wingate (Wingate campus)", "https://moodle4.wincol.ac.il"),
+    "beitberl": ("Beit Berl College", "https://moodle2.beitberl.ac.il"),
+    "oranim": ("Oranim College", "https://moodle25.oranim.ac.il"),
+    "dyellin": ("David Yellin College", "https://online.dyellin.ac.il"),
+    "kaye": ("Kaye College", "https://online.kaye.ac.il"),
+    "washington": ("Givat Washington College", "https://moodle.washington.ac.il"),
+    "talpiot": ("Talpiot College", "https://moodle4.talpiot.ac.il"),
+    "shaanan": ("Shaanan College", "https://moodle4.shaanan.ac.il"),
+    "orot": ("Orot Israel College", "https://moodle4.orot.ac.il"),
+    "efrata": ("Efrata College", "https://moodle4.emef.ac.il"),
+    "hemdat": ("Hemdat College", "https://moodle4.hemdat.ac.il"),
+    "sakhnin": ("Sakhnin College", "https://moodle4.sakhnin.ac.il"),
+    "qsm": ("Al-Qasemi Academy", "https://moodle4.qsm.ac.il"),
+    "arabcol": ("Arab Academic College for Education, Haifa", "https://moodle4.arabcol.ac.il"),
+}
+
+_site = os.environ.get("MOODLE_SITE", "tau").strip().lower()
+if _site not in SITES and not os.environ.get("MOODLE_URL"):
+    raise SystemExit(f"Unknown MOODLE_SITE '{_site}'. Options: {', '.join(SITES)} (or set MOODLE_URL)")
+BASE = (os.environ.get("MOODLE_URL") or SITES[_site][1]).rstrip("/")
 TOKEN_FILE = Path(os.environ.get("MOODLE_TOKEN_FILE", Path(__file__).resolve().parent / ".token"))
 DOWNLOAD_DIR = Path(os.environ.get("MOODLE_DOWNLOAD_DIR", Path.home() / "Downloads" / "moodle")).resolve()
 
@@ -190,4 +241,9 @@ def download_file(fileurl: str, subfolder: str = "") -> str:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    import sys
+    if "--sites" in sys.argv:
+        for key, (name, url) in SITES.items():
+            print(f"{key:11} {name:45} {url}")
+    else:
+        mcp.run()
