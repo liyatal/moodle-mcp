@@ -53,8 +53,9 @@ from moodle_safety import (
 __all__ = [
     "MAX_ASSIGN_STATUS_CALLS", "MAX_FORUMS", "MAX_ITEMS", "MAX_NAME", "MAX_TEXT", "READ_FUNCTIONS",
     "HIGH_RISK", "SITES", "ConfigError", "MoodleError", "assignments", "call", "check_download_url",
-    "clean_text", "course_contents", "download_dir", "download_file", "ensure_site_identity",
-    "fmt_time", "forum_discussions", "get_base", "grades", "html_to_text", "is_write_function",
+    "clean_text", "course_contents", "course_updates", "download_dir", "download_file",
+    "ensure_site_identity", "fmt_time", "forum_discussions", "forum_posts", "get_base", "grades",
+    "html_to_text", "is_write_function",
     "list_courses", "main", "max_download_bytes", "safe_filename", "safe_subfolder", "scrub",
     "token", "untrusted", "upcoming_deadlines", "userid", "validate_base_url",
 ]
@@ -245,7 +246,8 @@ READ_FUNCTIONS = frozenset({
     "core_calendar_get_action_events_by_timesort", "mod_assign_get_assignments",
     "mod_assign_get_submission_status", "gradereport_user_get_grade_items",
     "mod_forum_get_forums_by_courses", "mod_forum_get_forum_discussions",
-    "tool_mobile_get_public_config",
+    "tool_mobile_get_public_config", "core_course_get_updates_since",
+    "mod_forum_get_discussion_posts",
 })
 # fmt: on
 _RESERVED_PARAMS = frozenset({"wstoken", "wsfunction", "moodlewsrestformat"})
@@ -636,6 +638,7 @@ def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
             out.append(
                 {
                     "forum": untrusted(f.get("name"), "forum.name", limit=MAX_NAME),
+                    "discussion_id": _int(d.get("discussion")),  # pass to forum_posts
                     "subject": untrusted(d.get("subject"), "forum.subject", limit=MAX_NAME),
                     "author": untrusted(d.get("userfullname"), "forum.author", limit=MAX_NAME),
                     "posted": fmt_time(d.get("created")),
@@ -647,6 +650,86 @@ def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
         shown.append({"truncated": f"{len(shown)} of {len(out)}+ shown"})
         return shown
     return _capped(shown, len(out))
+
+
+@_tool
+def forum_posts(discussion_id: int, limit: int = 20) -> list[dict]:
+    """Posts (opening post and replies, oldest first) of one forum discussion; the
+    discussion_id comes from forum_discussions."""
+    _int_arg(discussion_id, "discussion_id", 1)
+    _int_arg(limit, "limit", 1, 50)
+    res = call(
+        "mod_forum_get_discussion_posts",
+        discussionid=discussion_id,
+        sortby="created",
+        sortdirection="ASC",
+    )
+    posts = _dicts(res.get("posts") if isinstance(res, dict) else None)
+    out = [
+        {
+            "id": _int(p.get("id")),
+            "parent_id": _int(p.get("parentid")),
+            "subject": untrusted(p.get("subject"), "post.subject", limit=MAX_NAME),
+            "author": untrusted(_sub(p, "author").get("fullname"), "post.author", limit=MAX_NAME),
+            "posted": fmt_time(p.get("timecreated")),
+            "message": untrusted(p.get("message") or "", "post.message", html=True),
+        }
+        for p in posts[:limit]
+    ]
+    return _capped(out, len(posts))
+
+
+_AREA_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")  # update area names are PARAM_ALPHANUMEXT
+
+
+def _area(v) -> str | None:
+    """An update area name (configuration, contentfiles, gradeitems...) or None."""
+    return v if isinstance(v, str) and _AREA_RE.fullmatch(v) else None
+
+
+@_tool
+def course_updates(course_id: int, since_days: int = 7) -> list[dict]:
+    """What changed in a course recently: activities with new or updated content, files,
+    grades, comments... in the last N days (1-90)."""
+    _int_arg(course_id, "course_id", 1)
+    _int_arg(since_days, "since_days", 1, 90)
+    since = int(time.time()) - since_days * 86400
+    res = call("core_course_get_updates_since", courseid=course_id, since=since)
+    instances = _dicts(res.get("instances") if isinstance(res, dict) else None)
+    modules: dict[int, dict] = {}
+    if instances:  # one extra call to turn module ids into names
+        try:
+            sections = _dicts(call("core_course_get_contents", courseid=course_id))
+        except MoodleError as e:
+            if e.errorcode in _AUTH_ERRORS:
+                raise
+            sections = []  # names stay None
+        for s in sections:
+            for m in _dicts(s.get("modules")):
+                if _int(m.get("id")) is not None:
+                    modules.setdefault(m["id"], m)
+    out = []
+    for inst in instances[:MAX_ITEMS]:
+        cmid = _int(inst.get("id"))
+        mod = modules.get(cmid, {}) if cmid is not None else {}
+        updates = _dicts(inst.get("updates"))
+        entries = [
+            {
+                "what": _area(u.get("name")),
+                "when": fmt_time(u.get("timeupdated")),
+                "count": len(u["itemids"]) if isinstance(u.get("itemids"), list) else 0,
+            }
+            for u in updates[:MAX_ITEMS]
+        ]
+        out.append(
+            {
+                "id": cmid,
+                "type": _word(mod.get("modname")),
+                "name": untrusted(mod.get("name"), "module.name", limit=MAX_NAME),
+                "updates": _capped(entries, len(updates)),
+            }
+        )
+    return _capped(out, len(instances))
 
 
 _SAVE_ERROR = "Could not save the file (disk or path problem)."
