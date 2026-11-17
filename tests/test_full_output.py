@@ -60,8 +60,8 @@ def test_limits_are_frozen_and_default_equals_the_old_constants(m):
     assert (d.items, d.forums, d.text, d.post_text, d.name) == (50, 10, 1500, 8000, 200)
     assert (d.assign_status_calls, d.modules_total, d.files_total, d.limit_arg) == (
         25,
-        300,
-        300,
+        150,
+        100,
         50,
     )
     assert d.response_bytes == 10 * 1024 * 1024
@@ -72,7 +72,7 @@ def test_limits_are_frozen_and_default_equals_the_old_constants(m):
         8000,
         200,
     )
-    assert (m.MAX_ASSIGN_STATUS_CALLS, m.MAX_MODULES_TOTAL, m.MAX_FILES_TOTAL) == (25, 300, 300)
+    assert (m.MAX_ASSIGN_STATUS_CALLS, m.MAX_MODULES_TOTAL, m.MAX_FILES_TOTAL) == (25, 150, 100)
     assert m.REST_MAX_BYTES == 10 * 1024 * 1024
 
 
@@ -221,9 +221,9 @@ def test_course_contents_default_still_capped(m, mock):
     mock.on("core_course_get_contents", _contents(60, 70, 2))
     out = m.course_contents(1)
     mods = [x for s in out if "modules" in s for x in s["modules"] if "id" in x]
-    # paging: 2 files per module, so the 300-file budget ends the page after 150 modules
+    # paging: 2 files per module, so the file budget ends the page after files_total // 2 modules
     assert len(mods) == m.MAX_FILES_TOTAL // 2
-    assert markers(out) == [out[-1]] and out[-1]["next_offset"] == 150
+    assert markers(out) == [out[-1]] and out[-1]["next_offset"] == m.MAX_FILES_TOTAL // 2
 
 
 def test_course_contents_full_mode_budget_marker(m, mock, full):
@@ -232,7 +232,9 @@ def test_course_contents_full_mode_budget_marker(m, mock, full):
     # paging: one final marker after the section instead of a marker inside it
     assert len(out[0]["modules"]) == 10_000
     assert out[-1] == {
-        "truncated": "10000 of 10050 activities shown (output limit reached)",
+        "truncated": (
+            "this page shows activities 1-10000 of 10050 (output limit reached); 50 remain"
+        ),
         "next_offset": 10_000,
     }
 

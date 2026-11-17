@@ -694,7 +694,8 @@ def course_contents(
     if offset + shown < total:
         out.append(
             {
-                "truncated": f"{shown} of {total} activities shown (output limit reached)",
+                "truncated": f"this page shows activities {offset + 1}-{offset + shown} of "
+                f"{total} (output limit reached); {total - offset - shown} remain",
                 "next_offset": offset + shown,
             }
         )
@@ -703,7 +704,8 @@ def course_contents(
 
 @_tool
 def upcoming_deadlines(days: int = 14) -> list[dict]:
-    """Upcoming deadlines / action events (assignments, quizzes...) in the next N days."""
+    """Upcoming deadlines / action events (assignments, quizzes...) in the next N days: the
+    window is N x 24 hours counted from now, so an event later on the Nth day is not included."""
     _int_arg(days, "days", 1, 365)
     lim, now = limits(), int(time.time())
     res = call(
@@ -729,6 +731,8 @@ def upcoming_deadlines(days: int = 14) -> list[dict]:
 @_tool
 def assignments(course_id: int, offset: int = 0) -> list[dict]:
     """Assignments of a course with due dates, my submission status and attached files.
+    "id" is the assignment id; the activity (course module) id used by course_contents and
+    course_updates is a different number.
     A cut list ends with {"truncated": ..., "next_offset": N}: call again with offset=N for the
     next page."""
     _int_arg(course_id, "course_id", 1)

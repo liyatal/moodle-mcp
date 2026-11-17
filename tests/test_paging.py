@@ -44,6 +44,14 @@ def ids(sections) -> list:
     return [mod["id"] for s in real(sections) for mod in s["modules"]]
 
 
+def page_text(offset: int, shown: int, total: int) -> str:
+    """The final page marker's text (offset = 0-based index of the first activity on the page)."""
+    return (
+        f"this page shows activities {offset + 1}-{offset + shown} of {total} "
+        f"(output limit reached); {total - offset - shown} remain"
+    )
+
+
 def _file(name: str, k: int = 0) -> dict:
     return {
         "type": "file",
@@ -170,18 +178,20 @@ def test_section_filter_empty_section_is_listed(m, mock):
 
 
 def test_section_filter_pages_a_huge_section(m, mock):
+    budget = m.MAX_MODULES_TOTAL
+    n = budget + budget // 2  # one full page plus a half page
     mock.on(
         "core_course_get_contents",
-        _course([(2, [(f"M{i}", []) for i in range(450)]), (3, [("x", [])])]),
+        _course([(2, [(f"M{i}", []) for i in range(n)]), (3, [("x", [])])]),
     )
     pages = walk(m, section=2)
     assert len(pages) == 2
     assert pages[0][-1] == {
-        "truncated": "300 of 450 activities shown (output limit reached)",
-        "next_offset": 300,
+        "truncated": page_text(0, budget, n),
+        "next_offset": budget,
     }
     got = [i for p in pages for i in ids(p)]
-    assert got == list(range(1, 451))
+    assert got == list(range(1, n + 1))
     assert all(s["section_number"] == 2 for p in pages for s in real(p))
 
 
@@ -262,7 +272,7 @@ def test_query_pages_like_the_unfiltered_listing(m, mock):
     mock.on("core_course_get_contents", _big(30, 14, 0))  # 420 activities, names M<s>-<i>
     pages = walk(m, query="m")
     assert [i for p in pages for i in ids(p)] == list(range(1, 421))
-    assert pages[0][-1]["truncated"] == "300 of 420 activities shown (output limit reached)"
+    assert pages[0][-1]["truncated"] == page_text(0, m.MAX_MODULES_TOTAL, 420)
     sub = m.course_contents(7, query="-13")  # the 14th module of every section
     assert len(ids(sub)) == 30 and not markers(sub)
 
@@ -328,11 +338,9 @@ def test_query_results_stay_fenced(m, mock):
 def test_big_course_has_one_final_marker_and_no_per_module_markers(m, mock):
     mock.on("core_course_get_contents", _big())  # 280 activities x 20 files
     out = m.course_contents(7)
+    fit = m.MAX_FILES_TOTAL // 20  # whole modules (20 files each) that fit the file budget
     assert markers(out) == [out[-1]]
-    assert out[-1] == {
-        "truncated": "15 of 280 activities shown (output limit reached)",
-        "next_offset": 15,
-    }
+    assert out[-1] == {"truncated": page_text(0, fit, 280), "next_offset": fit}
     for s in real(out):
         assert not markers(s["modules"])
         for mod in s["modules"]:
@@ -354,32 +362,39 @@ def test_pages_reconstruct_the_course_without_gaps_or_duplicates(m, mock):
 
 
 def test_module_budget_pages_across_sections(m, mock):
+    b = m.MAX_MODULES_TOTAL
     mock.on("core_course_get_contents", _big(40, 20, 0))  # 800 activities, no files
     first = m.course_contents(7)
-    assert first[-1] == {
-        "truncated": "300 of 800 activities shown (output limit reached)",
-        "next_offset": 300,
-    }
-    assert [s["section_number"] for s in real(first)] == list(range(15))
-    second = m.course_contents(7, offset=300)
-    assert second[-1]["next_offset"] == 600
-    assert ids(second) == list(range(301, 601))
-    last = m.course_contents(7, offset=600)
-    assert ids(last) == list(range(601, 801)) and not markers(last)
+    assert first[-1] == {"truncated": page_text(0, b, 800), "next_offset": b}
+    assert [s["section_number"] for s in real(first)] == list(range(-(-b // 20)))
+    second = m.course_contents(7, offset=b)
+    assert second[-1]["next_offset"] == 2 * b
+    assert ids(second) == list(range(b + 1, 2 * b + 1))
+    pages = walk(m)
+    assert [i for p in pages for i in ids(p)] == list(range(1, 801))
+    assert not markers(pages[-1]) and len(pages) == -(-800 // b)
 
 
 def test_a_section_split_by_a_page_boundary_keeps_its_header_on_both_pages(m, mock):
+    b = m.MAX_MODULES_TOTAL
+    a_n = b * 2 // 3  # section 0 fits on page one, section 1 only partly
+    b_n = b * 2 // 3
+    on_first = b - a_n
     mock.on(
         "core_course_get_contents",
         _course(
-            [(0, [(f"A{i}", []) for i in range(250)]), (1, [(f"B{i}", []) for i in range(100)])]
+            [
+                (0, [(f"A{i}", []) for i in range(a_n)]),
+                (1, [(f"B{i}", []) for i in range(b_n)]),
+            ]
         ),
     )
     first, second = walk(m)
     assert [s["section_number"] for s in real(first)] == [0, 1]
     assert [s["section_number"] for s in real(second)] == [1]
-    assert len(real(first)[1]["modules"]) == 50 and len(second[0]["modules"]) == 50
-    assert second[0]["modules_total"] == 100
+    assert len(real(first)[1]["modules"]) == on_first
+    assert len(second[0]["modules"]) == b_n - on_first
+    assert second[0]["modules_total"] == b_n
 
 
 def test_empty_sections_appear_exactly_once_across_pages(m, mock):
@@ -422,23 +437,25 @@ def test_offset_inside_a_section(m, mock):
 
 
 def test_page_ends_before_a_module_whose_files_would_not_fit(m, mock):
+    full = m.MAX_FILES_TOTAL // 50  # modules of 50 files that exactly fill the file budget
     spec = [
         (
             0,
-            [("A", [f"a{i}" for i in range(50)]) for _ in range(5)]
+            [("A", [f"a{i}" for i in range(50)]) for _ in range(full - 1)]
             + [("B", [f"b{i}" for i in range(50)])]
             + [("C", ["c"])],
         )
     ]
     mock.on("core_course_get_contents", _course(spec))
     first = m.course_contents(7)
-    assert ids(first) == [1, 2, 3, 4, 5, 6]  # exactly 300 files
-    assert first[-1]["next_offset"] == 6
-    assert ids(m.course_contents(7, offset=6)) == [7]
+    assert ids(first) == list(range(1, full + 1))  # exactly the file budget
+    assert first[-1]["next_offset"] == full
+    assert ids(m.course_contents(7, offset=full)) == [full + 1]
 
 
 def test_no_marker_when_everything_fits(m, mock):
-    mock.on("core_course_get_contents", _big(5, 10, 6))  # 50 activities, 300 files
+    # 50 activities (under the module budget), files exactly filling the file budget
+    mock.on("core_course_get_contents", _big(5, 10, m.MAX_FILES_TOTAL // 50))
     out = m.course_contents(7)
     assert not markers(out) and len(ids(out)) == 50
 
@@ -457,11 +474,30 @@ def test_full_output_mode_still_pages_past_its_ceiling(m, mock, monkeypatch):
     mock.on("core_course_get_contents", _course([(0, [("x", [])] * 10_050)]))
     out = m.course_contents(7)
     assert out[-1] == {
-        "truncated": "10000 of 10050 activities shown (output limit reached)",
+        "truncated": page_text(0, 10_000, 10_050),
         "next_offset": 10_000,
     }
     rest = m.course_contents(7, offset=10_000)
     assert len(rest[0]["modules"]) == 50 and not markers(rest)
+
+
+def test_marker_text_on_a_later_page_names_the_window_and_the_rest(m, mock):
+    b = m.MAX_MODULES_TOTAL
+    total = 3 * b - 7
+    mock.on("core_course_get_contents", _course([(0, [(f"M{i}", []) for i in range(total)])]))
+    second = m.course_contents(7, offset=b)
+    mk = second[-1]
+    assert mk == {
+        "truncated": f"this page shows activities {b + 1}-{2 * b} of {total} "
+        f"(output limit reached); {total - 2 * b} remain",
+        "next_offset": 2 * b,
+    }
+    assert ids(second) == list(range(b + 1, 2 * b + 1))
+    # the numbers add up: before + shown + remaining == total
+    shown = len(ids(second))
+    assert b + shown + (total - 2 * b) == total and shown == mk["next_offset"] - b
+    third = m.course_contents(7, offset=mk["next_offset"])
+    assert not markers(third) and len(ids(third)) == total - 2 * b
 
 
 def test_course_contents_paging_makes_one_request_per_page(m, mock):

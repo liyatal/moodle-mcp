@@ -171,21 +171,24 @@ def test_course_updates_inner_marker_names_updates(m, mock):
 
 
 def test_course_contents_budget_marks_inner_lists_with_the_reason(m, mock):
-    # 290 modules in 5 full sections first, so the 6th section has only 10 modules left
-    files = [{"type": "file", "filename": "f", "fileurl": "https://x/f"}]
-    big = [{"id": i, "name": "M", "modname": "page", "contents": files} for i in range(58)]
-    sections = [{"name": "S", "modules": big} for _ in range(5)]  # 5 x 50 shown = 250
-    sections.append({"name": "T", "modules": big[:40]})  # 290 shown, budget left: 10
-    sections.append({"name": "U", "modules": big})  # 10 of 58: cut by the budget
+    # two full sections first, then a short one, so the last section has only 14 modules left
+    budget = m.MAX_MODULES_TOTAL
+    big = [{"id": i, "name": "M", "modname": "page", "contents": []} for i in range(58)]
+    mid = budget - 2 * 58 - 14  # modules of section T; the budget then leaves 14 for section U
+    sections = [{"name": "S", "modules": big} for _ in range(2)]
+    sections.append({"name": "T", "modules": big[:mid]})
+    sections.append({"name": "U", "modules": big})  # 14 of 58: cut by the budget
     mock.on("core_course_get_contents", sections)
     result = m.course_contents(7)
-    # paging: no marker inside sections; the page holds 300 whole activities, then one marker
+    total = 3 * 58 + mid
+    # paging: no marker inside sections; the page holds `budget` whole activities, one marker
     assert all("truncated" not in x for s in result[:-1] for x in s["modules"])
-    assert [s["modules_total"] for s in result[:-1]] == [58, 58, 58, 58, 58, 40]
-    assert sum(len(s["modules"]) for s in result[:-1]) == 300
+    assert [s["modules_total"] for s in result[:-1]] == [58, 58, mid, 58]
+    assert sum(len(s["modules"]) for s in result[:-1]) == budget
     assert _page_marker(result[-1]) == (
-        "300 of 388 activities shown (output limit reached)",
-        300,
+        f"this page shows activities 1-{budget} of {total} (output limit reached); "
+        f"{total - budget} remain",
+        budget,
     )
 
 
@@ -194,11 +197,15 @@ def test_course_contents_file_budget_marks_files_with_the_reason(m, mock):
     mods = [{"id": i, "name": "M", "modname": "resource", "contents": files} for i in range(8)]
     mock.on("core_course_get_contents", [{"name": "S", "modules": mods}])
     section, marker = m.course_contents(7)
-    # paging: 6 x 45 = 270 files; the 7th module would not fit, so the page ends before it
+    fit = m.MAX_FILES_TOTAL // 45
+    # paging: `fit` x 45 files; the next module would not fit, so the page ends before it
     # (no module is cut by the budget, no per-module budget markers)
     assert all(len(x["files"]) == 45 and x["files_total"] == 45 for x in section["modules"])
-    assert len(section["modules"]) == 6
-    assert _page_marker(marker) == ("6 of 8 activities shown (output limit reached)", 6)
+    assert len(section["modules"]) == fit
+    assert _page_marker(marker) == (
+        f"this page shows activities 1-{fit} of 8 (output limit reached); {8 - fit} remain",
+        fit,
+    )
 
 
 def test_markers_keep_the_single_key_shape_everywhere(m, mock):

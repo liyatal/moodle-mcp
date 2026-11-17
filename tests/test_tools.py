@@ -208,11 +208,13 @@ def test_course_contents_caps_sections_modules_and_files(m, mock):
     ]
     mock.on("core_course_get_contents", sections)
     result = m.course_contents(7)
-    # paging: one page holds whole modules until the 300-file budget would be exceeded
-    # (6 x 50 files), then ONE final marker says where the next page starts
+    # paging: one page holds whole modules until the file budget would be exceeded
+    # (50 files per module), then ONE final marker says where the next page starts
+    fit = m.MAX_FILES_TOTAL // 50
     assert result[-1] == {
-        "truncated": "6 of 2704 activities shown (output limit reached)",
-        "next_offset": 6,
+        "truncated": f"this page shows activities 1-{fit} of 2704 (output limit reached); "
+        f"{2704 - fit} remain",
+        "next_offset": fit,
     }
     sections_shown = result[:-1]
     modules = [mod for s in sections_shown for mod in s["modules"]]
@@ -245,12 +247,14 @@ def test_course_contents_global_budget_stops_the_listing(m, mock):
         for x in s["modules"]
         if "id" in x
     )
-    # paging: 30 modules x 10 files fill the 300-file budget; one final marker
-    assert n_modules == 30
+    # paging: modules x 10 files fill the file budget; one final marker
+    fit = m.MAX_FILES_TOTAL // 10
+    assert n_modules == fit
     assert n_files == m.MAX_FILES_TOTAL
     assert result[-1] == {
-        "truncated": "30 of 2500 activities shown (output limit reached)",
-        "next_offset": 30,
+        "truncated": f"this page shows activities 1-{fit} of 2500 (output limit reached); "
+        f"{2500 - fit} remain",
+        "next_offset": fit,
     }
     assert len(shown) == 1
 

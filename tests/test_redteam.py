@@ -211,7 +211,7 @@ def test_unwrapped_fields_are_capped_and_cleaned(m, mock, setup):
 # MB) - one course_contents call can blow the model's context / the client's memory.
 def test_course_contents_total_output_is_bounded(m, mock):
     # The mock reply must stay under the 10 MiB REST cap (a bigger one is refused earlier, see
-    # test_rest_reply_over_10_mib_is_refused) but still exceed the 300 modules / 300 files budget.
+    # test_rest_reply_over_10_mib_is_refused) but still exceed the module / file budgets.
     files = [{"type": "file", "filename": f"f{i}.pdf", "fileurl": _url()} for i in range(52)]
     mods = [{"id": i, "name": "m", "modname": "resource", "contents": files} for i in range(52)]
     reply = [{"name": "s", "modules": mods} for _ in range(8)]
@@ -222,12 +222,14 @@ def test_course_contents_total_output_is_bounded(m, mock):
     shown = [s for s in out if "modules" in s]
     modules = [x for s in shown for x in s["modules"] if "id" in x]
     files_shown = [f for x in modules for f in x["files"] if "filename" in f]
-    # paging: the page ends where the next module's files no longer fit the 300-file budget
-    assert len(modules) == 6
+    # paging: the page ends where the next module's files no longer fit the file budget
+    fit = m.MAX_FILES_TOTAL // 50  # each module shows at most 50 files
+    assert len(modules) == fit
     assert len(files_shown) == m.MAX_FILES_TOTAL
     assert out[-1] == {
-        "truncated": "6 of 416 activities shown (output limit reached)",
-        "next_offset": 6,
+        "truncated": f"this page shows activities 1-{fit} of 416 (output limit reached); "
+        f"{416 - fit} remain",
+        "next_offset": fit,
     }
 
 
