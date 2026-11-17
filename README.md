@@ -33,7 +33,7 @@
 
 <div dir="rtl">
 
-משם Claude יוריד את הפרויקט, יתקין אותו, יבחר את המוסד שלכם ויחבר את השרת ל-Claude Code, וגם ל-Claude Desktop אם הוא מותקן אצלכם. בסוף הוא יבקש מכם דבר אחד: לשמור את ה-token בעצמכם (שלב 2 למטה). את ה-token לא מדביקים בצ'אט.
+משם Claude יוריד את הפרויקט, יתקין אותו, יבחר את המוסד שלכם ויחבר את השרת ל-Claude Code, וגם ל-Claude Desktop אם הוא מותקן אצלכם. בסוף הוא יבקש מכם דבר אחד: להריץ פקודת התחברות אחת בטרמינל (שלב 2 למטה). סיסמה ומפתח לא מדביקים בצ'אט.
 
 **איפה זה עובד:** ב-Claude Code וב-Claude Desktop (מק וווינדוס). השרת רץ על המחשב שלכם, ולכן הוא לא זמין באתר claude.ai ובאפליקציה בטלפון.
 
@@ -64,23 +64,32 @@ python3 -m venv .venv
 
 <div dir="rtl">
 
-### 2. משיגים token
+### 2. מתחברים
 
-ב-Moodle: תמונת הפרופיל ← **העדפות** ← **מפתחות אבטחה**. בשורה של *Moodle mobile web service* לוחצים על **איפוס** — רק אז מוצג המפתח המלא — ומעתיקים אותו.
-
-שימו לב: איפוס מבטל את המפתח הקודם, כך שאפליקציית Moodle בטלפון עשויה לבקש התחברות מחדש.
-
-כשהמפתח בלוח, מריצים בתיקיית הפרויקט:
+מריצים בטרמינל, בתיקיית הפרויקט (מחליפים את `tau` במפתח של המוסד שלכם):
 
 </div>
 
 ```bash
-pbpaste > .token && chmod 600 .token
+.venv/bin/pip install playwright
+MOODLE_SITE=tau .venv/bin/python moodle_mcp.py --login
 ```
 
 <div dir="rtl">
 
-הקובץ `.token` לא נכנס ל-git. אפשר גם להשתמש במשתנה הסביבה `MOODLE_TOKEN`.
+הכלי בוחר לבד את דרך ההתחברות של המוסד שלכם:
+
+- **בדפדפן:** נפתח חלון של Chrome או Edge, ומתחברים כרגיל עם פרטי האוניברסיטה. ככה זה בתל אביב, בטכניון ובעוד 20 מוסדות.
+- **שם משתמש וסיסמה:** הכלי שואל אותם בטרמינל. הסיסמה מוסתרת, נשלחת רק ל-Moodle של המוסד ולא נשמרת. ככה זה בבן-גוריון, בבצלאל, ברופין ועוד.
+
+בשתי הדרכים לא צריך ללחוץ על "איפוס". מקבלים את המפתח הקיים, כך שאפליקציית Moodle בטלפון נשארת מחוברת. המפתח נשמר בקובץ `.token`, שלא נכנס ל-git, ולא מוצג על המסך. נבדק מקצה לקצה רק בתל אביב.
+
+<details>
+<summary>לא עבד? הדרך הידנית</summary>
+
+ב-Moodle: תמונת הפרופיל ← **העדפות** ← **מפתחות אבטחה**. בשורה של *Moodle mobile web service* לוחצים על **איפוס**, ורק אז מוצג המפתח המלא. מעתיקים אותו ומריצים בתיקיית הפרויקט `pbpaste > .token && chmod 600 .token`. שימו לב: איפוס מבטל את המפתח הקודם, כך שאפליקציית Moodle בטלפון עשויה לבקש התחברות מחדש. אפשר גם להשתמש במשתנה הסביבה `MOODLE_TOKEN`.
+
+</details>
 
 ### 3. מחברים ל-Claude
 
@@ -173,6 +182,7 @@ mkdir -p ~/.claude/skills && cp -r skills/moodle ~/.claude/skills/
 ## 🔒 אבטחה
 
 - ה-token שווה ערך לסיסמה לקריאת ה-Moodle שלכם. לא מעלים אותו ל-git ולא מדביקים אותו בצ'אט.
+- ב-`--login` הסיסמה עוברת רק ל-Moodle של המוסד ולא נשמרת. המפתח שחוזר נבדק לפני שהוא נשמר.
 - ה-token נשלח רק לשרת ה-Moodle שהוגדר. הורדה מכל כתובת אחרת נחסמת.
 - הורדות לא יכולות לצאת מתיקיית ההורדות.
 
@@ -207,11 +217,16 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-**Token:** in Moodle, profile picture → **Preferences** → **Security keys**. On the *Moodle mobile web service* row click **Reset** — the full key is only shown after a reset — and copy it. (Resetting cancels the previous key, so the Moodle phone app may ask you to log in again.) Then:
+**Log in** (replace `tau` with your institution's key):
 
 ```bash
-pbpaste > .token && chmod 600 .token
+.venv/bin/pip install playwright
+MOODLE_SITE=tau .venv/bin/python moodle_mcp.py --login
 ```
+
+It picks your institution's login method by itself: a Chrome/Edge window where you log in as usual (TAU, Technion and 20 others), or your Moodle username and password typed into the terminal (hidden, sent only to your Moodle, never stored). Either way you get your existing key, with no Reset, so the Moodle phone app stays logged in. The key goes into `.token` and is never printed. Only TAU has been tested end to end.
+
+*Didn't work?* In Moodle, profile picture → **Preferences** → **Security keys**, click **Reset** on the *Moodle mobile web service* row (the full key only shows after a reset; this logs the phone app out), copy it and run `pbpaste > .token && chmod 600 .token`.
 
 **Connect** (replace `tau` with your institution's key from the list above):
 
@@ -236,7 +251,7 @@ If a user gave you this repository and asked you to install it, do this:
 3. Register the server with absolute paths:
    `claude mcp add moodle -s user -e MOODLE_SITE=<key> -- <repo>/.venv/bin/python <repo>/moodle_mcp.py`
    If Claude Desktop is installed (its `claude_desktop_config.json` exists: `~/Library/Application Support/Claude/` on macOS, `%APPDATA%\Claude\` on Windows), also add the server there: back the file up, then add a `moodle` entry under `mcpServers` with the same `command`, `args` and `env`, keeping every other key untouched. Tell the user to restart Claude Desktop.
-4. **Do not ask for the token in chat and do not read `.token`.** Tell the user to get their key from Moodle (Preferences → Security keys → click **Reset** on the *Moodle mobile web service* row to reveal the full key, then copy it) and run `pbpaste > <repo>/.token && chmod 600 <repo>/.token` themselves. On Windows/Linux, have them save it to that file with their own editor.
+4. **Do not ask for the token or password in chat and do not read `.token`.** Install `playwright` into the venv, then ask the user to run this in their own terminal (it may open a browser window or prompt for a hidden password): `cd <repo> && MOODLE_SITE=<key> .venv/bin/python moodle_mcp.py --login`. If that fails, the fallback is manual: Moodle → Preferences → Security keys → **Reset** on the *Moodle mobile web service* row, copy, and `pbpaste > <repo>/.token && chmod 600 <repo>/.token` (on Windows/Linux, save it to that file with their own editor).
 5. Install the skill: `mkdir -p ~/.claude/skills && cp -r <repo>/skills/moodle ~/.claude/skills/`.
 6. After they confirm, verify with `MOODLE_SITE=<key> .venv/bin/python -c "import moodle_mcp as m; print(len(m.list_courses()), 'courses')"`, then tell them to start a new session so the tools load.
 7. If verification fails with `invalidtoken` or a web-service error, say so plainly: their institution may not issue tokens to students. Do not try to obtain a token another way.

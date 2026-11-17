@@ -7,7 +7,8 @@ Token lookup order:
     1. MOODLE_TOKEN environment variable
     2. .token file next to this script   (one line, chmod 600)
 
-Run:  .venv/bin/python moodle_mcp.py     (stdio)
+Get a token:  .venv/bin/python moodle_mcp.py --login   (see moodle_login.py)
+Run:          .venv/bin/python moodle_mcp.py           (stdio)
 """
 
 import os
@@ -245,5 +246,9 @@ if __name__ == "__main__":
     if "--sites" in sys.argv:
         for key, (name, url) in SITES.items():
             print(f"{key:11} {name:45} {url}")
+    elif "--login" in sys.argv:
+        from moodle_login import login
+        forced = next((m for m in ("browser", "password") if f"--{m}" in sys.argv), None)
+        login(BASE, TOKEN_FILE, forced)
     else:
         mcp.run()
