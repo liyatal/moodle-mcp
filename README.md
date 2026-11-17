@@ -66,7 +66,7 @@ python3 -m venv .venv
 
 ### 2. מתחברים
 
-מריצים בטרמינל, בתיקיית הפרויקט (מחליפים את `tau` במפתח של המוסד שלכם):
+מריצים בטרמינל מתוך תיקיית `moodle-mcp` (בטרמינל חדש, קודם `cd` אליה), ומחליפים את `tau` במפתח של המוסד שלכם:
 
 </div>
 
@@ -133,6 +133,32 @@ Windows:  %APPDATA%\Claude\claude_desktop_config.json
 ```
 
 <div dir="rtl">
+
+## 🔌 עובד גם עם אפליקציות אחרות
+
+MCP הוא סטנדרט פתוח, אז מה שקובע זה האפליקציה ולא המודל. כל אפליקציה שמריצה שרתי MCP מקומיים יכולה להשתמש בו, עם GPT, עם Gemini או אפילו עם מודל שרץ אצלכם במחשב. מוסיפים את אותו בלוק JSON משלב 3 לקובץ ההגדרות של האפליקציה:
+
+| אפליקציה | איפה מגדירים |
+| --- | --- |
+| Cursor | `~/.cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| Gemini CLI | `~/.gemini/settings.json` |
+| LM Studio | בתוך האפליקציה: Program ← Install ← Edit mcp.json |
+| VS Code (Copilot, מצב agent) | `.vscode/mcp.json` — המפתח הראשי הוא `servers` במקום `mcpServers`, ומוסיפים `"type": "stdio"` |
+| Codex CLI | `~/.codex/config.toml` — בפורמט TOML, ראו למטה |
+
+</div>
+
+```toml
+[mcp_servers.moodle]
+command = "/full/path/to/moodle-mcp/.venv/bin/python"
+args = ["/full/path/to/moodle-mcp/moodle_mcp.py"]
+env = { MOODLE_SITE = "tau" }
+```
+
+<div dir="rtl">
+
+נבדק רק ב-Claude Code; האחרות לפי מה שהן תומכות בו. **לא עובד** ב-ChatGPT, ב-Gemini באתר, ב-claude.ai ובאפליקציות בטלפון: הן מתחברות רק לשרתים שמתארחים באינטרנט, והשרת הזה רץ על המחשב שלכם.
 
 ## 🏫 בוחרים מוסד
 
@@ -237,6 +263,8 @@ claude mcp add moodle -s user -e MOODLE_SITE=tau -- "$PWD/.venv/bin/python" "$PW
 For Claude Desktop, add the JSON block shown above to `claude_desktop_config.json` (Settings → Developer → Edit Config; on macOS it lives in `~/Library/Application Support/Claude/`, on Windows in `%APPDATA%\Claude\`) and restart the app. The server runs on your own computer, so it works in Claude Code and Claude Desktop but not on claude.ai in the browser or in the phone app.
 
 Run `.venv/bin/python moodle_mcp.py --sites` for the full list of institutions with names and URLs; for anything not listed, set `MOODLE_URL`.
+
+**Other apps:** MCP is an open standard, so any app that runs local MCP servers works, whatever model it uses. Add the same JSON block to Cursor (`~/.cursor/mcp.json`), Windsurf (`~/.codeium/windsurf/mcp_config.json`), Gemini CLI (`~/.gemini/settings.json`) or LM Studio (Program → Install → Edit mcp.json). VS Code uses `.vscode/mcp.json` with a top-level `servers` key and `"type": "stdio"`; Codex CLI uses the TOML block above in `~/.codex/config.toml`. Only Claude Code has been tested. It does not work in ChatGPT, Gemini on the web, claude.ai or phone apps, which only connect to servers hosted on the internet.
 
 All 37 sites were checked to be live Moodle sites (November 2026), but only TAU has been tested end to end with a real token.
 
