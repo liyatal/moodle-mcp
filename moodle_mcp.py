@@ -11,6 +11,7 @@ Get a token:  .venv/bin/python moodle_mcp.py --login   (see moodle_login.py)
 Run:          .venv/bin/python moodle_mcp.py           (stdio)
 """
 
+import logging
 import os
 import time
 import datetime as dt
@@ -19,6 +20,10 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+# httpx logs every request URL at INFO, and download_file puts the token in the URL.
+# Keep it out of the MCP server log.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Israeli institutions whose Moodle answered the public config endpoint (checked 2026-11).
 # Pick one with MOODLE_SITE=<key>; anything else works through MOODLE_URL.
