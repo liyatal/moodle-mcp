@@ -41,13 +41,20 @@
 
 | כלי | מה הוא עושה |
 | --- | --- |
+| `whats_new` | מה התחדש בכל הקורסים בימים האחרונים: קבצים, מטלות והודעות, בקריאה אחת |
 | `list_courses` | הקורסים שאתם רשומים אליהם |
 | `course_contents` | יחידות, פעילויות וקבצים של קורס |
 | `upcoming_deadlines` | מטלות ובחנים בימים הקרובים |
-| `assignments` | תאריכי הגשה, סטטוס ההגשה שלכם וקבצים מצורפים |
+| `calendar_events` | כל מה שבלוח השנה של Moodle: מבחנים, אירועים ומועדי הגשה |
+| `assignments` | תאריכי הגשה, סטטוס ההגשה שלכם, הציון, הערות הבודק וקבצים מצורפים |
+| `quizzes` | בחנים: מועדי פתיחה וסגירה, הגבלת זמן, הניסיונות והציון שלכם |
 | `grades` | הציונים שלכם בקורס |
+| `grades_overview` | הציון הסופי בכל הקורסים, בקריאה אחת |
 | `forum_discussions` | הודעות אחרונות בפורומים ובלוח ההודעות |
+| `forum_thread` | שרשור מלא בפורום, כולל כל התגובות |
+| `notifications` | ההתראות שלכם ב-Moodle (הפעמון) |
 | `download_file` | שמירת קובץ מהקורס ל-`~/Downloads/moodle` |
+| `download_course` | הורדת כל הקבצים של קורס לתיקייה מסודרת לפי יחידות; קבצים שכבר ירדו ולא השתנו מדולגים |
 
 ## 🚀 התקנה ידנית
 
@@ -266,6 +273,8 @@ claude mcp add moodle -s user -e MOODLE_SITE=tau -- "$PWD/.venv/bin/python" "$PW
 ```
 
 For Claude Desktop, add the JSON block shown above to `claude_desktop_config.json` (Settings → Developer → Edit Config; on macOS it lives in `~/Library/Application Support/Claude/`, on Windows in `%APPDATA%\Claude\`) and restart the app. The server runs on your own computer, so it works in Claude Code and Claude Desktop but not on claude.ai in the browser or in the phone app.
+
+**Tools:** `whats_new` (everything that changed across your courses, in one call), `list_courses`, `course_contents`, `upcoming_deadlines`, `calendar_events`, `assignments` (with grade and grader feedback), `quizzes`, `grades`, `grades_overview`, `forum_discussions`, `forum_thread`, `notifications`, `download_file` and `download_course` (a whole course into one folder, skipping files you already have).
 
 Run `.venv/bin/python moodle_mcp.py --sites` for the full list of institutions with names and URLs; for anything not listed, set `MOODLE_URL`.
 

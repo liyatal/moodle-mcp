@@ -13,8 +13,11 @@ Run:          .venv/bin/python moodle_mcp.py           (stdio)
 
 import logging
 import os
+import re
 import time
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -131,16 +134,122 @@ def fmt_time(ts):
     return dt.datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M") if ts else None
 
 
+class _Text(HTMLParser):
+    """Moodle sends messages and descriptions as HTML; turn them into readable text."""
+    BLOCK = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "ul", "ol", "table"}
+
+    def __init__(self):
+        super().__init__()
+        self.out, self.href, self.start, self.skip = [], None, 0, 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self.skip += 1
+        if tag in self.BLOCK:
+            self.out.append("\n")
+        if tag == "li":
+            self.out.append("- ")
+        if tag == "a":
+            self.href, self.start = dict(attrs).get("href"), len(self.out)
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style") and self.skip:
+            self.skip -= 1
+        if tag == "a" and self.href:
+            if self.href.startswith("http") and self.href not in "".join(self.out[self.start:]):
+                self.out.append(f" ({self.href})")
+            self.href = None
+        if tag in self.BLOCK:
+            self.out.append("\n")
+
+    def handle_data(self, data):
+        if not self.skip:
+            self.out.append(data)
+
+
+def text(html, limit: int | None = None) -> str:
+    if not html:
+        return ""
+    parser = _Text()
+    parser.feed(str(html))
+    parser.close()
+    out = re.sub(r"[ \t\xa0]+", " ", "".join(parser.out))
+    out = re.sub(r"\s*\n\s*", "\n", out).strip()
+    return out[:limit].rstrip() + "…" if limit and len(out) > limit else out
+
+
+def _safe(name, limit: int = 80) -> str:
+    """A file or folder name that is safe on macOS, Windows and Linux."""
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", str(name or ""))
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    if len(name) > limit:
+        stem, dot, ext = name.rpartition(".")
+        name = stem[:limit - len(ext) - 1].rstrip(" .") + "." + ext if dot and len(ext) <= 8 else name[:limit].rstrip(" .")
+    return name or "untitled"
+
+
+def _my_courses(include_past: bool = False) -> list[dict]:
+    now = time.time()
+    courses = call("core_enrol_get_users_courses", userid=userid())
+    return [c for c in courses if include_past or not (c.get("enddate") and c["enddate"] < now)]
+
+
+def _parallel(fn, items):
+    """Run fn over items a few at a time. Returns (item, result, error) per item."""
+    def one(item):
+        try:
+            return item, fn(item), None
+        except Exception as e:
+            return item, None, str(e)[:200]
+    items = list(items)
+    if not items:
+        return []
+    with ThreadPoolExecutor(max_workers=min(6, len(items))) as pool:
+        return list(pool.map(one, items))
+
+
+def _plugin_files(plugins) -> list[dict]:
+    return [{"filename": f.get("filename"), "fileurl": f.get("fileurl")}
+            for p in plugins or [] for area in p.get("fileareas", []) for f in area.get("files", [])]
+
+
+def _fetch(fileurl: str, path: Path) -> int:
+    """Stream a Moodle file to path. Returns the size in bytes."""
+    url, base = urlsplit(fileurl), urlsplit(BASE)
+    # Exact scheme+host match: the token is appended to this URL, so it must never leave Moodle.
+    if (url.scheme, url.netloc) != (base.scheme, base.netloc):
+        raise ValueError("Only Moodle file URLs are allowed")
+    sep = "&" if url.query else "?"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".part")
+    size = 0
+    try:
+        with _client.stream("GET", f"{fileurl}{sep}token={token()}", follow_redirects=False) as r:
+            if r.status_code != 200:
+                raise RuntimeError(f"Moodle answered HTTP {r.status_code} for this file")
+            if "application/json" in r.headers.get("content-type", ""):
+                r.read()
+                raise RuntimeError(f"Moodle refused the download: {r.text[:300]}")
+            with open(tmp, "wb") as fh:
+                for chunk in r.iter_bytes():
+                    fh.write(chunk)
+                    size += len(chunk)
+        tmp.replace(path)
+    except httpx.HTTPError as e:
+        # httpx puts the request URL (with the token) in its messages; never pass them on.
+        raise RuntimeError(f"Download failed: {type(e).__name__}") from None
+    finally:
+        tmp.unlink(missing_ok=True)
+    return size
+
+
 @mcp.tool()
 def list_courses(include_past: bool = False) -> list[dict]:
     """List the courses I'm enrolled in (current by default)."""
     now = time.time()
-    courses = call("core_enrol_get_users_courses", userid=userid())
     out = []
-    for c in courses:
+    for c in _my_courses(include_past):
         ended = bool(c.get("enddate") and c["enddate"] < now)
-        if ended and not include_past:
-            continue
         out.append({"id": c["id"], "name": c["fullname"], "shortname": c["shortname"],
                     "progress": c.get("progress"), "ended": ended})
     return out
@@ -182,16 +291,31 @@ def assignments(course_id: int) -> list[dict]:
     out = []
     for c in res.get("courses", []):
         for a in c.get("assignments", []):
-            status = None
+            item = {"id": a["id"], "name": a["name"], "due": fmt_time(a.get("duedate")),
+                    "cutoff": fmt_time(a.get("cutoffdate")), "submission_status": None,
+                    "files": [{"filename": f["filename"], "fileurl": f["fileurl"]}
+                              for f in a.get("introattachments", [])]}
             try:
                 st = call("mod_assign_get_submission_status", assignid=a["id"])
-                status = st.get("lastattempt", {}).get("submission", {}).get("status")
             except Exception:
-                pass
-            out.append({"id": a["id"], "name": a["name"], "due": fmt_time(a.get("duedate")),
-                        "cutoff": fmt_time(a.get("cutoffdate")), "submission_status": status,
-                        "files": [{"filename": f["filename"], "fileurl": f["fileurl"]}
-                                  for f in a.get("introattachments", [])]})
+                st = {}
+            last = st.get("lastattempt") or {}
+            sub = last.get("submission") or last.get("teamsubmission") or {}
+            item["submission_status"] = sub.get("status")
+            if sub.get("status") == "submitted":
+                item["submitted_on"] = fmt_time(sub.get("timemodified"))
+                item["submitted_files"] = _plugin_files(sub.get("plugins"))
+            if last.get("gradingstatus"):
+                item["grading_status"] = last["gradingstatus"]
+            fb = st.get("feedback") or {}
+            if fb:
+                comments = [text(e.get("text")) for p in fb.get("plugins", []) if p.get("type") == "comments"
+                            for e in p.get("editorfields", [])]
+                item["grade"] = text(fb.get("gradefordisplay"), 500)
+                item["graded_on"] = fmt_time(fb.get("gradeddate"))
+                item["feedback"] = "\n".join(c for c in comments if c)[:4000] or None
+                item["feedback_files"] = _plugin_files(fb.get("plugins"))
+            out.append(item)
     return out
 
 
@@ -209,6 +333,15 @@ def grades(course_id: int) -> list[dict]:
 
 
 @mcp.tool()
+def grades_overview() -> list[dict]:
+    """My course total grade in every course, in one call."""
+    names = {c["id"]: c["fullname"] for c in _my_courses(include_past=True)}
+    res = call("gradereport_overview_get_course_grades", userid=userid())
+    return [{"course_id": g["courseid"], "course": names.get(g["courseid"]), "grade": g.get("grade")}
+            for g in res.get("grades", [])]
+
+
+@mcp.tool()
 def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
     """Latest discussions in a course's forums (announcements included)."""
     forums = call("mod_forum_get_forums_by_courses", courseids=[course_id])
@@ -217,33 +350,227 @@ def forum_discussions(course_id: int, limit: int = 10) -> list[dict]:
         res = call("mod_forum_get_forum_discussions", forumid=f["id"], perpage=limit,
                    sortorder=1)  # newest first
         for d in res.get("discussions", []):
-            out.append({"forum": f["name"], "subject": d["subject"], "author": d.get("userfullname"),
-                        "posted": fmt_time(d.get("created")), "message": d.get("message", "")[:1500]})
+            out.append({"forum": f["name"], "discussion_id": d.get("discussion"), "subject": d["subject"],
+                        "author": d.get("userfullname"), "posted": fmt_time(d.get("created")),
+                        "replies": d.get("numreplies"), "last_post": fmt_time(d.get("timemodified")),
+                        "message": text(d.get("message"), 1500)})
+    return out
+
+
+@mcp.tool()
+def forum_thread(discussion_id: int) -> list[dict]:
+    """Every post of one forum discussion, oldest first (discussion_id from forum_discussions / whats_new)."""
+    res = call("mod_forum_get_discussion_posts", discussionid=discussion_id,
+               sortby="created", sortdirection="ASC")
+    return [{"id": p["id"], "reply_to": p.get("parentid") if p.get("hasparent") else None,
+             "author": (p.get("author") or {}).get("fullname"), "posted": fmt_time(p.get("timecreated")),
+             "subject": p.get("subject"), "message": text(p.get("message"), 4000),
+             "attachments": [{"filename": a.get("filename"), "fileurl": a.get("fileurl")}
+                             for a in p.get("attachments", [])]}
+            for p in res.get("posts", []) if not p.get("isdeleted")]
+
+
+@mcp.tool()
+def quizzes(course_id: int) -> list[dict]:
+    """Quizzes of a course: when they open and close, time limit, my attempts and best grade."""
+    res = call("mod_quiz_get_quizzes_by_courses", courseids=[course_id])
+    out = []
+    for q in res.get("quizzes", []):
+        item = {"id": q["id"], "name": q["name"], "opens": fmt_time(q.get("timeopen")),
+                "closes": fmt_time(q.get("timeclose")),
+                "time_limit_minutes": q["timelimit"] // 60 if q.get("timelimit") else None,
+                "attempts_allowed": q.get("attempts") or "unlimited", "max_grade": q.get("grade")}
+        try:
+            attempts = call("mod_quiz_get_user_attempts", quizid=q["id"], status="all").get("attempts", [])
+            item["my_attempts"] = [{"attempt": a.get("attempt"), "state": a.get("state"),
+                                    "started": fmt_time(a.get("timestart")),
+                                    "finished": fmt_time(a.get("timefinish"))} for a in attempts]
+            best = call("mod_quiz_get_user_best_grade", quizid=q["id"])
+            item["best_grade"] = best.get("grade") if best.get("hasgrade") else None
+        except Exception:
+            pass
+        out.append(item)
+    return out
+
+
+@mcp.tool()
+def notifications(limit: int = 20, unread_only: bool = False) -> dict:
+    """My Moodle notifications (the bell): graded work, forum posts, reminders. Newest first."""
+    res = call("message_popup_get_popup_notifications", useridto=userid(), newestfirst=1,
+               limit=max(1, min(limit, 100)))
+    items = [{"subject": n.get("subject"), "received": fmt_time(n.get("timecreated")),
+              "read": bool(n.get("read")), "kind": n.get("eventtype"),
+              "text": text(n.get("fullmessagehtml") or n.get("fullmessage") or n.get("smallmessage"), 800),
+              "url": n.get("contexturl")}
+             for n in res.get("notifications", []) if not (unread_only and n.get("read"))]
+    return {"unread_count": res.get("unreadcount"), "notifications": items}
+
+
+@mcp.tool()
+def calendar_events(days: int = 30) -> list[dict]:
+    """Everything on my Moodle calendar in the next N days: exams, lecturer events, my own events, due dates."""
+    now = int(time.time())
+    names = {c["id"]: c["fullname"] for c in _my_courses()}
+    res = call("core_calendar_get_calendar_events", events={"courseids": list(names)},
+               options={"userevents": 1, "siteevents": 1, "timestart": now,
+                        "timeend": now + days * 86400, "ignorehidden": 1})
+    events = sorted(res.get("events", []), key=lambda e: e.get("timestart") or 0)
+    return [{"name": e["name"], "course": names.get(e.get("courseid")), "type": e.get("eventtype"),
+             "activity": e.get("modulename") or None, "start": fmt_time(e.get("timestart")),
+             "end": fmt_time(e["timestart"] + e["timeduration"]) if e.get("timeduration") else None,
+             "description": text(e.get("description"), 400)}
+            for e in events]
+
+
+@mcp.tool()
+def whats_new(days: int = 7) -> dict:
+    """What changed in all my current courses in the last N days: new or updated files, assignments,
+    forum posts and other activities. Start here for "anything new?" questions."""
+    since = int(time.time()) - days * 86400
+    names = {c["id"]: c["fullname"] for c in _my_courses()}
+    ids = list(names)
+    files, other, errors = [], [], []
+
+    def scan(cid):
+        sections = call("core_course_get_contents", courseid=cid)
+        try:
+            updates = call("core_course_get_updates_since", courseid=cid, since=since).get("instances", [])
+        except Exception:
+            updates = []
+        return sections, updates
+
+    for cid, res, err in _parallel(scan, ids):
+        if err:
+            errors.append(f"{names[cid]}: {err}")
+            continue
+        sections, updates = res
+        mods, reported = {}, set()
+        for s in sections:
+            for mod in s.get("modules", []):
+                mods[mod["id"]] = (mod, s["name"])
+                new = [f for f in mod.get("contents", [])
+                       if f.get("type") == "file" and (f.get("timemodified") or 0) >= since]
+                if not new:
+                    continue
+                reported.add(mod["id"])
+                ts = max(f["timemodified"] for f in new)
+                entry = {"course": names[cid], "course_id": cid, "section": s["name"], "name": mod["name"],
+                         "type": mod["modname"], "updated": fmt_time(ts), "_ts": ts}
+                if mod["modname"] in ("resource", "folder"):
+                    entry["files"] = [{"filename": f["filename"], "fileurl": f["fileurl"]} for f in new[:15]]
+                else:
+                    entry["url"] = mod.get("url")
+                files.append(entry)
+        for inst in updates:
+            mod, section = mods.get(inst.get("id"), (None, None))
+            if not mod or inst.get("contextlevel") != "module" or mod["id"] in reported \
+                    or mod["modname"] in ("label", "unilabel", "subsection", "forum", "assign"):
+                continue
+            other.append({"course": names[cid], "course_id": cid, "section": section, "name": mod["name"],
+                          "type": mod["modname"], "url": mod.get("url"),
+                          "changed": sorted({u.get("name") for u in inst.get("updates", [])})})
+
+    assigns = []
+    try:
+        for c in call("mod_assign_get_assignments", courseids=ids).get("courses", []) if ids else []:
+            for a in c.get("assignments", []):
+                if (a.get("timemodified") or 0) >= since:
+                    assigns.append({"course": names.get(c["id"]), "course_id": c["id"], "id": a["id"],
+                                    "name": a["name"], "due": fmt_time(a.get("duedate")),
+                                    "updated": fmt_time(a["timemodified"]), "_ts": a["timemodified"]})
+    except Exception as e:
+        errors.append(f"assignments: {str(e)[:200]}")
+
+    posts = []
+    try:
+        forums = call("mod_forum_get_forums_by_courses", courseids=ids) if ids else []
+    except Exception as e:
+        forums = []
+        errors.append(f"forums: {str(e)[:200]}")
+    for f, res, err in _parallel(lambda f: call("mod_forum_get_forum_discussions", forumid=f["id"],
+                                                perpage=10, sortorder=1), forums):
+        if err:
+            continue  # forums the student cannot read are not news
+        for d in res.get("discussions", []):
+            ts = d.get("timemodified") or 0
+            if ts >= since:
+                posts.append({"course": names.get(f.get("course")), "course_id": f.get("course"),
+                              "forum": f["name"], "discussion_id": d.get("discussion"), "subject": d["subject"],
+                              "started_by": d.get("userfullname"), "last_post_by": d.get("usermodifiedfullname"),
+                              "replies": d.get("numreplies"), "last_post": fmt_time(ts),
+                              "preview": text(d.get("message"), 300), "_ts": ts})
+
+    def newest_first(rows):
+        rows.sort(key=lambda r: r["_ts"], reverse=True)
+        return [{k: v for k, v in r.items() if k != "_ts"} for r in rows]
+
+    out = {"since": fmt_time(since), "files": newest_first(files), "assignments": newest_first(assigns),
+           "forum_posts": newest_first(posts), "other_changes": other}
+    if errors:
+        out["errors"] = errors
     return out
 
 
 @mcp.tool()
 def download_file(fileurl: str, subfolder: str = "") -> str:
     """Download a course file (fileurl from course_contents / assignments) to the local downloads folder."""
-    url, base = urlsplit(fileurl), urlsplit(BASE)
-    # Exact scheme+host match: the token is appended to this URL, so it must never leave Moodle.
-    if (url.scheme, url.netloc) != (base.scheme, base.netloc):
-        raise ValueError("Only Moodle file URLs are allowed")
     target = (DOWNLOAD_DIR / subfolder).resolve()
     if not target.is_relative_to(DOWNLOAD_DIR):
         raise ValueError("subfolder must stay inside the download directory")
-    name = Path(unquote(url.path)).name
+    name = Path(unquote(urlsplit(fileurl).path)).name
     if not name:
         raise ValueError("URL has no file name")
-    sep = "&" if url.query else "?"
-    r = _client.get(f"{fileurl}{sep}token={token()}", follow_redirects=False)
-    r.raise_for_status()
-    if "application/json" in r.headers.get("content-type", ""):
-        raise RuntimeError(f"Moodle refused the download: {r.text[:300]}")
-    target.mkdir(parents=True, exist_ok=True)
     path = target / name
-    path.write_bytes(r.content)
+    _fetch(fileurl, path)
     return str(path)
+
+
+@mcp.tool()
+def download_course(course_id: int, section: str = "", max_mb: int = 200) -> dict:
+    """Download all files of a course (or only the sections whose name contains `section`) into
+    one folder per course, with a subfolder per section. Files already downloaded and unchanged
+    are skipped, so calling it again only fetches what is new. If `remaining` is above 0 it ran
+    out of time: call it again to continue."""
+    course = next((c for c in _my_courses(include_past=True) if c["id"] == course_id), None)
+    root = DOWNLOAD_DIR / _safe(course["fullname"] if course else f"course {course_id}")
+    budget = time.time() + float(os.environ.get("MOODLE_DOWNLOAD_SECONDS", "45"))
+    out = {"folder": str(root), "downloaded": [], "unchanged": 0, "remaining": 0,
+           "too_large": [], "failed": [], "bytes": 0}
+    seen = set()
+    for s in call("core_course_get_contents", courseid=course_id):
+        if section and section.lower() not in s["name"].lower():
+            continue
+        for mod in s.get("modules", []):
+            if mod["modname"] not in ("resource", "folder"):
+                continue  # pages and books are web content, not files to keep
+            for f in mod.get("contents", []):
+                if f.get("type") != "file" or f.get("isexternalfile"):
+                    continue
+                folder = root / _safe(s["name"])
+                if mod["modname"] == "folder":
+                    folder = folder / _safe(mod["name"])
+                    for part in (f.get("filepath") or "/").strip("/").split("/"):
+                        folder = folder / _safe(part) if part else folder
+                path = folder / _safe(f["filename"], 150)
+                if path in seen:  # two activities in a section with the same file name
+                    path = path.with_stem(f"{path.stem} ({mod['id']})")
+                seen.add(path)
+                if not path.resolve().is_relative_to(DOWNLOAD_DIR):
+                    continue
+                size, modified = f.get("filesize") or 0, f.get("timemodified") or 0
+                if path.exists() and path.stat().st_size == size and path.stat().st_mtime >= modified:
+                    out["unchanged"] += 1
+                elif size > max_mb * 1024 * 1024:
+                    out["too_large"].append({"filename": f["filename"], "mb": round(size / 1048576)})
+                elif time.time() > budget:
+                    out["remaining"] += 1
+                else:
+                    try:
+                        out["bytes"] += _fetch(f["fileurl"], path)
+                        out["downloaded"].append(str(path.relative_to(root)))
+                    except Exception as e:
+                        out["failed"].append({"filename": f["filename"], "error": str(e)[:150]})
+    return out
 
 
 if __name__ == "__main__":
