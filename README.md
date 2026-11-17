@@ -148,6 +148,18 @@ Windows:  %APPDATA%\Claude\claude_desktop_config.json
 - כל 37 האתרים נבדקו כאתרי Moodle פעילים (נובמבר 2026), אבל רק תל אביב נבדקה מקצה לקצה עם token אמיתי. האם אפשר להוציא token תלוי בהגדרות של כל מוסד.
 - חלק מהמוסדות פותחים Moodle חדש כל שנה (`moodle26…`, `moodle27…`), ולכן הכתובות האלה דורשות עדכון שנתי.
 
+## 🧠 Skill (לא חובה)
+
+בתיקייה `skills/moodle` יש קובץ `SKILL.md` שמלמד את Claude מתי להשתמש בכל כלי: למשל לבדוק דדליינים לפני שהוא בונה תוכנית לימודים, ולעולם לא להגיש כלום. ב-Claude Code מעתיקים אותו כך:
+
+</div>
+
+```bash
+mkdir -p ~/.claude/skills && cp -r skills/moodle ~/.claude/skills/
+```
+
+<div dir="rtl">
+
 ## ⚙️ הגדרות
 
 | משתנה | ברירת מחדל | משמעות |
@@ -225,9 +237,18 @@ If a user gave you this repository and asked you to install it, do this:
    `claude mcp add moodle -s user -e MOODLE_SITE=<key> -- <repo>/.venv/bin/python <repo>/moodle_mcp.py`
    If Claude Desktop is installed (its `claude_desktop_config.json` exists: `~/Library/Application Support/Claude/` on macOS, `%APPDATA%\Claude\` on Windows), also add the server there: back the file up, then add a `moodle` entry under `mcpServers` with the same `command`, `args` and `env`, keeping every other key untouched. Tell the user to restart Claude Desktop.
 4. **Do not ask for the token in chat and do not read `.token`.** Tell the user to get their key from Moodle (Preferences → Security keys → click **Reset** on the *Moodle mobile web service* row to reveal the full key, then copy it) and run `pbpaste > <repo>/.token && chmod 600 <repo>/.token` themselves. On Windows/Linux, have them save it to that file with their own editor.
-5. After they confirm, verify with `MOODLE_SITE=<key> .venv/bin/python -c "import moodle_mcp as m; print(len(m.list_courses()), 'courses')"`, then tell them to start a new session so the tools load.
-6. If verification fails with `invalidtoken` or a web-service error, say so plainly: their institution may not issue tokens to students. Do not try to obtain a token another way.
+5. Install the skill: `mkdir -p ~/.claude/skills && cp -r <repo>/skills/moodle ~/.claude/skills/`.
+6. After they confirm, verify with `MOODLE_SITE=<key> .venv/bin/python -c "import moodle_mcp as m; print(len(m.list_courses()), 'courses')"`, then tell them to start a new session so the tools load.
+7. If verification fails with `invalidtoken` or a web-service error, say so plainly: their institution may not issue tokens to students. Do not try to obtain a token another way.
 
 ---
 
-Not affiliated with any university, college or Moodle.
+<div dir="rtl">
+
+עזר לכם? תנו ⭐ לריפו כדי שעוד סטודנטים ימצאו אותו.
+
+</div>
+
+If this helped you, a ⭐ helps other students find it.
+
+[MIT License](LICENSE) · Not affiliated with any university, college or Moodle.
