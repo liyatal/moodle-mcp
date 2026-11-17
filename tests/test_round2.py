@@ -442,6 +442,7 @@ EXPECTED_SCHEMA = {
     "forum_discussions": ({"course_id", "limit", "offset"}, {"course_id"}),
     "course_updates": ({"course_id", "since_days", "offset"}, {"course_id"}),
     "forum_posts": ({"discussion_id", "limit", "offset"}, {"discussion_id"}),
+    "quizzes": ({"course_id", "offset"}, {"course_id"}),
     "download_file": ({"fileurl", "subfolder"}, {"fileurl"}),
 }
 

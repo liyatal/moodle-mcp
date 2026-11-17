@@ -23,6 +23,9 @@ EXPECTED_READ_FUNCTIONS = {
     "mod_forum_get_forum_discussions",
     "core_course_get_updates_since",
     "mod_forum_get_discussion_posts",
+    "mod_quiz_get_quizzes_by_courses",
+    "mod_quiz_get_user_attempts",
+    "mod_quiz_get_user_best_grade",
     "tool_mobile_get_public_config",
 }
 

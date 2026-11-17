@@ -26,7 +26,7 @@ def non_site(mock) -> list[str]:
 
 def test_new_functions_are_allowlisted_and_not_writes(m):
     assert NEW_FUNCTIONS <= set(m.READ_FUNCTIONS)
-    assert len(m.READ_FUNCTIONS) == 12
+    assert len(m.READ_FUNCTIONS) == 15  # 12 + the three quiz reads (batch 2)
     for name in NEW_FUNCTIONS:
         assert m.is_write_function(name) is False
 
@@ -401,7 +401,7 @@ def test_validation_errors_do_not_contain_token(m, mock, tool):
 
 def test_tools_registered_with_fastmcp(m):
     tools = {t.name: t for t in asyncio.run(m.mcp.list_tools())}
-    assert len(tools) == 9
+    assert len(tools) == 10
     cu, fp = tools["course_updates"], tools["forum_posts"]
     assert set(cu.inputSchema["properties"]) == {"course_id", "since_days", "offset"}
     assert set(cu.inputSchema["required"]) == {"course_id"}

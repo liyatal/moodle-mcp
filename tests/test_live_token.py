@@ -218,3 +218,21 @@ def test_course_contents_pages_and_section_filter(live, courses):
             assert only and all(s["section_number"] == number for s in only)
         return
     pytest.skip("no course with sections in the first courses")
+
+
+def test_quizzes_shape(live, courses):
+    """Shapes only (no names, grades or dates in assertions); skipped if no course has quizzes."""
+    seen = 0
+    for c in courses[:8]:
+        for q in real_items(live.quizzes(c["id"])):
+            seen += 1
+            assert fenced(q["name"])
+            assert q["id"] is None or isinstance(q["id"], int)
+            assert q["attempts_allowed"] is None or isinstance(q["attempts_allowed"], int)
+            assert q["max_grade"] is None or isinstance(q["max_grade"], (int, float))
+            assert q["best_grade"] is None or isinstance(q["best_grade"], (int, float))
+            assert q["attempts"] is None or isinstance(q["attempts"], list)
+            for a in real_items(q["attempts"] or []):
+                assert set(a) == {"attempt", "state", "started", "finished", "score"}
+    if not seen:
+        pytest.skip("no quizzes in the first courses")

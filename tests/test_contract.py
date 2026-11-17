@@ -20,6 +20,7 @@ TOOLS = {
     "forum_discussions",
     "course_updates",
     "forum_posts",
+    "quizzes",
     "download_file",
 }
 
@@ -93,6 +94,7 @@ def test_tools_are_plain_callables_with_unchanged_signatures(m):
             ("offset", 0),
         ],
         "forum_posts": [("discussion_id", inspect.Parameter.empty), ("limit", 20), ("offset", 0)],
+        "quizzes": [("course_id", inspect.Parameter.empty), ("offset", 0)],
         "download_file": [("fileurl", inspect.Parameter.empty), ("subfolder", "")],
     }
     for name, params in expected.items():
@@ -102,10 +104,10 @@ def test_tools_are_plain_callables_with_unchanged_signatures(m):
         assert actual == params, name
 
 
-def test_fastmcp_exposes_exactly_the_nine_read_tools(m):
+def test_fastmcp_exposes_exactly_the_ten_read_tools(m):
     tools = asyncio.run(m.mcp.list_tools())
     assert {tool.name for tool in tools} == TOOLS
-    assert len(tools) == 9
+    assert len(tools) == 10
 
 
 def test_fastmcp_instructions_state_the_data_vs_instruction_rule(m):

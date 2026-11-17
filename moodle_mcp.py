@@ -69,7 +69,7 @@ __all__ = [
     "clean_text", "course_contents", "course_updates", "download_dir", "download_file",
     "ensure_site_identity", "fmt_time", "forum_discussions", "forum_posts", "get_base", "grades",
     "html_to_text", "is_write_function", "split_multilang_name",
-    "list_courses", "main", "max_download_bytes", "safe_filename", "safe_subfolder", "scrub",
+    "list_courses", "main", "max_download_bytes", "quizzes", "safe_filename", "safe_subfolder", "scrub",
     "token", "untrusted", "upcoming_deadlines", "userid", "validate_base_url",
 ]
 # fmt: on
@@ -301,7 +301,8 @@ READ_FUNCTIONS = frozenset({
     "mod_assign_get_submission_status", "gradereport_user_get_grade_items",
     "mod_forum_get_forums_by_courses", "mod_forum_get_forum_discussions",
     "tool_mobile_get_public_config", "core_course_get_updates_since",
-    "mod_forum_get_discussion_posts",
+    "mod_forum_get_discussion_posts", "mod_quiz_get_quizzes_by_courses",
+    "mod_quiz_get_user_attempts", "mod_quiz_get_user_best_grade",
 })
 # fmt: on
 _RESERVED_PARAMS = frozenset({"wstoken", "wsfunction", "moodlewsrestformat"})
@@ -765,6 +766,69 @@ def assignments(course_id: int, offset: int = 0) -> list[dict]:
             }
         )
     return _capped(out, len(items), "assignments", offset=offset)
+
+
+@_tool
+def quizzes(course_id: int, offset: int = 0) -> list[dict]:
+    """Quizzes of a course: opening/closing time, time limit, attempts allowed, my attempts
+    (state, start, finish, raw score) and my best grade. Quiz questions and answers are never
+    returned. A cut list ends with {"truncated": ..., "next_offset": N}: call again with
+    offset=N for the next page."""
+    _int_arg(course_id, "course_id", 1)
+    _offset_arg(offset)
+    lim = limits()
+    res = call("mod_quiz_get_quizzes_by_courses", courseids=[course_id])
+    items = _dicts(res.get("quizzes") if isinstance(res, dict) else None)
+    out, calls, failures_in_a_row = [], 0, 0
+    for q in items[offset : offset + lim.items]:  # per-quiz calls only for this page
+        attempts: list[dict] | None = None
+        best: dict = {}
+        qid = _int(q.get("id"))
+        # same breaker as assignments(): 3 consecutive non-auth failures stop the extra calls
+        if qid is not None and calls < lim.assign_status_calls and failures_in_a_row < 3:
+            calls += 1
+            try:
+                got = call(
+                    "mod_quiz_get_user_attempts", quizid=qid, status="all", includepreviews=0
+                )
+                rows = _dicts(got.get("attempts") if isinstance(got, dict) else None)
+                attempts = _capped(
+                    [
+                        {
+                            "attempt": _int(a.get("attempt")),
+                            "state": _word(a.get("state")),
+                            "started": fmt_time(a.get("timestart")),
+                            "finished": fmt_time(a.get("timefinish")),
+                            "score": _num(a.get("sumgrades")),
+                        }
+                        for a in rows[: lim.items]
+                    ],
+                    len(rows),
+                    "attempts",
+                )
+                got = call("mod_quiz_get_user_best_grade", quizid=qid)
+                best = got if isinstance(got, dict) else {}
+                failures_in_a_row = 0
+            except MoodleError as e:
+                if e.errorcode in _AUTH_ERRORS:
+                    raise
+                failures_in_a_row += 1  # this quiz only: attempts/best_grade stay None
+        limit_s = _int(q.get("timelimit"))
+        allowed = _int(q.get("attempts"))
+        out.append(
+            {
+                "id": qid,
+                "name": untrusted(q.get("name"), "quiz.name", limit=lim.name),
+                "opens": fmt_time(q.get("timeopen")),
+                "closes": fmt_time(q.get("timeclose")),
+                "time_limit_minutes": round(limit_s / 60) if limit_s and limit_s > 0 else None,
+                "attempts_allowed": allowed if allowed and allowed > 0 else None,  # None: no cap
+                "max_grade": _num(q.get("grade")),
+                "attempts": attempts,
+                "best_grade": _num(best.get("grade")) if best.get("hasgrade") is True else None,
+            }
+        )
+    return _capped(out, len(items), "quizzes", offset=offset)
 
 
 @_tool
