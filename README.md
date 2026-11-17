@@ -87,7 +87,12 @@ MOODLE_SITE=tau .venv/bin/python moodle_mcp.py --login
 <details>
 <summary>לא עבד? הדרך הידנית</summary>
 
-ב-Moodle: תמונת הפרופיל ← **העדפות** ← **מפתחות אבטחה**. בשורה של *Moodle mobile web service* לוחצים על **איפוס**, ורק אז מוצג המפתח המלא. מעתיקים אותו ומריצים בתיקיית הפרויקט `pbpaste > .token && chmod 600 .token`. שימו לב: איפוס מבטל את המפתח הקודם, כך שאפליקציית Moodle בטלפון עשויה לבקש התחברות מחדש. אפשר גם להשתמש במשתנה הסביבה `MOODLE_TOKEN`.
+ב-Moodle: תמונת הפרופיל ← **העדפות** ← **מפתחות אבטחה**. בשורה של *Moodle mobile web service* לוחצים על **איפוס**, ורק אז מוצג המפתח המלא. מעתיקים אותו ומריצים בתיקיית הפרויקט את הפקודה שמתאימה למחשב שלכם:
+
+- במק: `pbpaste > .token && chmod 600 .token`
+- בווינדוס (PowerShell): `Get-Clipboard | Set-Content .token`
+
+שימו לב: איפוס מבטל את המפתח הקודם, כך שאפליקציית Moodle בטלפון עשויה לבקש התחברות מחדש. אפשר גם להשתמש במשתנה הסביבה `MOODLE_TOKEN`.
 
 </details>
 
@@ -252,7 +257,7 @@ MOODLE_SITE=tau .venv/bin/python moodle_mcp.py --login
 
 It picks your institution's login method by itself: a Chrome/Edge window where you log in as usual (TAU, Technion and 20 others), or your Moodle username and password typed into the terminal (hidden, sent only to your Moodle, never stored). Either way you get your existing key, with no Reset, so the Moodle phone app stays logged in. The key goes into `.token` and is never printed. Only TAU has been tested end to end.
 
-*Didn't work?* In Moodle, profile picture → **Preferences** → **Security keys**, click **Reset** on the *Moodle mobile web service* row (the full key only shows after a reset; this logs the phone app out), copy it and run `pbpaste > .token && chmod 600 .token`.
+*Didn't work?* In Moodle, profile picture → **Preferences** → **Security keys**, click **Reset** on the *Moodle mobile web service* row (the full key only shows after a reset; this logs the phone app out), copy it and run `pbpaste > .token && chmod 600 .token` on macOS, or `Get-Clipboard | Set-Content .token` in PowerShell on Windows.
 
 **Connect** (replace `tau` with your institution's key from the list above):
 
