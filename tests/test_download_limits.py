@@ -357,12 +357,15 @@ def test_the_target_is_checked_again_after_its_folders_were_created(m, mock, dl_
     """A folder swapped for a symlink between the first check and the first byte must not redirect the file."""
     outside = tmp_path / "outside"
     outside.mkdir()
+    dl_dir.mkdir(parents=True, exist_ok=True)  # so `week` is created by one mkdir call (no parent retry)
     week = dl_dir.resolve() / "week"
     real_mkdir = Path.mkdir
+    swapped = []
 
     def mkdir_then_swap(self, *args, **kwargs):
         real_mkdir(self, *args, **kwargs)
-        if self == week:
+        if self == week and not swapped:  # once (POSIX pathlib may call mkdir again for the parent)
+            swapped.append(True)
             week.rmdir()
             _symlink(week, outside)
 
