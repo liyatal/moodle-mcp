@@ -144,3 +144,38 @@ def safe_subfolder(sub) -> str:
     if any(p.strip() == ".." for p in parts):
         raise ValueError("subfolder must stay inside the download directory")
     return "/".join(safe_filename(p) for p in parts)
+
+
+# Web service functions that change data in Moodle (used by --doctor, never by a tool).
+_WRITE_VERBS = re.compile(
+    r"(?:^|_)(?:add|create|delete|remove|update|save|submit|send|set|unset|toggle|start|finish|"
+    r"mark|block|unblock|lock|unlock|enrol|unenrol|join|leave|trigger|process|upload|edit|new|"
+    r"launch|evaluate|approve|revert|reveal|insert|agree|confirm|decline|mute|unmute|enable|"
+    r"end|login|copy|post|override|reset|import)(?:_|$)"
+)
+# fmt: off
+HIGH_RISK = frozenset({
+    "tool_mobile_call_external_functions", "tool_mobile_get_autologin_key",
+    "core_user_add_user_device", "mod_wiki_get_page_for_editing",
+    "mod_bigbluebuttonbn_get_join_url", "tool_mobile_validate_subscription_key",
+    "core_message_message_processor_config_form",
+    # writes in Moodle's mobile service that the verb regex misses
+    "core_competency_grade_competency_in_course", "mod_bigbluebuttonbn_completion_validate",
+    "mod_forum_prepare_draft_area_for_post", "report_insights_action_executed",
+    "tool_dataprivacy_cancel_data_request", "tool_dataprivacy_contact_dpo",
+})
+# fmt: on
+
+
+def is_write_function(name: str) -> bool:
+    """Heuristic: does this web service function change data in Moodle?
+
+    Names are <component>_<method> (core_enrol_get_users_courses); verbs are only looked for
+    in the method part, so a component like core_enrol or core_block is not a write. Case is
+    ignored (Moodle's database resolves function names case-insensitively).
+    """
+    if not isinstance(name, str):
+        return False
+    name = name.lower()
+    method = name.split("_", 2)[2] if name.count("_") >= 2 else name
+    return name in HIGH_RISK or bool(_WRITE_VERBS.search(method))

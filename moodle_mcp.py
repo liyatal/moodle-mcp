@@ -32,7 +32,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 # Pure URL / file name checks (no network, no env); also reachable as moodle_mcp.<name>.
-from moodle_safety import check_download_url, safe_filename, safe_subfolder, validate_base_url
+from moodle_safety import check_download_url, is_write_function, safe_filename, safe_subfolder, validate_base_url
 
 # httpx/httpcore log every request URL at INFO (the fallback download puts the token in the URL).
 # Keep it out of the MCP server log.
@@ -89,6 +89,19 @@ DOWNLOAD_DEADLINE_S = 120  # one file download, start to end
 PREFLIGHT_MAX_BYTES = 64 * 1024  # the identity preflight talks to a not yet verified host
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]{16,128}")  # Moodle tokens are PARAM_ALPHANUM
 _TOKEN_PARAM_RE = re.compile(r"(\w*token=)[^&\s'\"<>]*", re.IGNORECASE)
+# The only Moodle functions this server will ever call. call() refuses anything else before any
+# HTTP request, so a tool (or a future change) cannot write to Moodle by accident. A new tool adds
+# its read-only function here, in plain sight in the diff. The token itself can do more than this.
+READ_FUNCTIONS = frozenset({
+    "core_webservice_get_site_info", "tool_mobile_get_public_config",
+    "core_enrol_get_users_courses", "core_course_get_contents", "core_course_get_updates_since",
+    "core_calendar_get_action_events_by_timesort", "core_calendar_get_calendar_events",
+    "mod_assign_get_assignments", "mod_assign_get_submission_status",
+    "gradereport_user_get_grade_items", "gradereport_overview_get_course_grades",
+    "mod_forum_get_forums_by_courses", "mod_forum_get_forum_discussions", "mod_forum_get_discussion_posts",
+    "mod_quiz_get_quizzes_by_courses", "mod_quiz_get_user_attempts", "mod_quiz_get_user_best_grade",
+    "message_popup_get_popup_notifications",
+})
 _RESERVED_PARAMS = frozenset({"wstoken", "wsfunction", "moodlewsrestformat"})
 _FRIENDLY = {
     "invalidtoken": "Moodle rejected the token (invalidtoken). Create a new token and save it.",
@@ -285,6 +298,8 @@ def ensure_site_identity() -> None:
 
 def call(function: str, **params):
     """Call a Moodle web service function (REST, JSON). The token goes in the POST body only."""
+    if type(function) is not str or function not in READ_FUNCTIONS:  # exact str: no look-alike subclasses
+        raise PermissionError("This server only calls the read-only Moodle functions in READ_FUNCTIONS.")
     flat = _flatten(params)
     if _RESERVED_PARAMS & (set(params) | set(flat)):
         raise ValueError("wstoken, wsfunction and moodlewsrestformat cannot be passed as params")
@@ -804,12 +819,83 @@ def download_course(course_id: int, section: str = "", max_mb: int = 200) -> dic
     return out
 
 
+def _doctor() -> int:
+    """Setup check for `--doctor`: prints OK/WARN/FAIL lines and never any token, name or course data."""
+    counts = {"OK": 0, "WARN": 0, "FAIL": 0}
+
+    def say(level: str, msg: str) -> None:
+        counts[level] += 1
+        print(f"{level}: {scrub(msg)}")
+
+    def summary() -> int:
+        print(f"doctor: {counts['OK']} ok, {counts['WARN']} warn, {counts['FAIL']} fail")
+        return 1 if counts["FAIL"] else 0
+
+    try:
+        base = get_base()
+    except ConfigError as e:
+        say("FAIL", f"Moodle URL: {e}")
+        return summary()
+    host = urlsplit(base).hostname
+    if base.startswith("https://"):
+        say("OK", f"Moodle URL is valid and uses https ({host})")
+    else:
+        say("WARN", f"Moodle URL uses plain http ({host}); allowed only for local testing")
+    have_token = False
+    try:
+        token()
+        have_token = True
+        say("OK", "token found and its format looks valid")
+        path = token_file()
+        own_file = not os.environ.get("MOODLE_TOKEN", "").strip()
+        if own_file and os.name == "posix" and path.exists() and path.stat().st_mode & 0o077:
+            say("WARN", f"{path} is readable by other users; run chmod 600 on it")
+    except ConfigError as e:
+        say("FAIL", f"token: {e}")
+    if os.environ.get("MOODLE_SKIP_PREFLIGHT", "").strip() == "1":
+        say("WARN", "site identity preflight is disabled (MOODLE_SKIP_PREFLIGHT=1)")
+    else:
+        try:
+            ensure_site_identity()
+            say("OK", f"site identity verified: the site says it is {host}")
+        except (MoodleError, ConfigError) as e:
+            say("FAIL", f"site identity: {e}")
+            return summary()
+    if not have_token:
+        return summary()
+    try:
+        info = call("core_webservice_get_site_info")
+        info = info if isinstance(info, dict) else {}
+    except (MoodleError, ConfigError, ValueError) as e:
+        say("FAIL", f"web service call failed: {e}")
+        return summary()
+    funcs = info.get("functions") if isinstance(info.get("functions"), list) else []
+    names = [f.get("name") for f in funcs if isinstance(f, dict)]
+    names = [n for n in names if isinstance(n, str) and re.fullmatch(r"[A-Za-z0-9_]{1,100}", n)]
+    release = re.sub(r"[^\w .()+:-]", "", str(info.get("release") or "unknown version"))[:60]
+    say("OK", f"web service works: host {host}, Moodle {release}, {len(names)} functions available")
+    missing = sorted(READ_FUNCTIONS - set(names) - {"tool_mobile_get_public_config"})
+    if missing:
+        say("WARN", f"{len(missing)} functions this server uses are not available for this token "
+                    f"(the matching tools will fail): {', '.join(missing)}")
+    writes = sorted(n for n in names if is_write_function(n))
+    if writes:
+        more = f" (+{len(writes) - 30} more)" if len(writes) > 30 else ""
+        say("WARN", f"this token can also call {len(writes)} write functions (this server never "
+                    f"calls them): {', '.join(writes[:30])}{more}")
+    else:
+        say("OK", "no write functions detected for this token")
+    return summary()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
     if "--sites" in args:
         for key, (name, url) in SITES.items():
             print(f"{key:11} {name:45} {url}")
         return 0
+    if "--doctor" in args:
+        return _doctor()
     try:
         base = get_base()
     except ConfigError as e:
