@@ -16,9 +16,11 @@ from support import (
     ChunkStream,
     assert_inside,
     assert_no_leak,
+    fenced,
     files_under,
     form,
     preflight_reply,
+    unwrap,
 )
 
 JSON_TYPE = {"content-type": "application/json"}
@@ -312,8 +314,16 @@ def test_a_connection_lost_half_way_leaves_no_partial_file(m, mock, dl_dir):
             "new token",
         ),
         ({"error": "Access control exception", "errorcode": "accessexception"}, "accessexception", "denied access"),
-        ({"exception": "moodle_exception", "errorcode": "weird", "message": "it broke"}, "weird", "weird: it broke"),
-        ({"error": "something went wrong"}, None, "Moodle refused the download: something went wrong"),
+        (
+            {"exception": "moodle_exception", "errorcode": "weird", "message": "it broke"},
+            "weird",
+            "weird: " + fenced("it broke", "moodle.error"),
+        ),
+        (
+            {"error": "something went wrong"},
+            None,
+            "Moodle refused the download: " + fenced("something went wrong", "moodle.error"),
+        ),
     ],
     ids=["invalidtoken", "accessexception", "other-exception", "error-string-only"],
 )
@@ -336,14 +346,15 @@ def test_error_text_in_a_json_reply_is_scrubbed(m, mock):
     assert FAKE_TOKEN not in str(info.value) and "ZZZ999888777" not in str(info.value)
 
 
-@pytest.mark.parametrize("start", [150, 170, 180, 190, 195, 199])
-def test_the_token_is_masked_before_the_short_refusal_text_is_cut(m, mock, start):
-    prefix = "Moodle refused the download: "
-    payload = {"error": "A" * (start - len(prefix)) + FAKE_TOKEN + " tail"}
+@pytest.mark.parametrize("start", [250, 280, 290, 298, 299, 300, 305])
+def test_the_token_is_masked_before_the_refusal_text_is_cut(m, mock, start):
+    payload = {"error": "A" * start + FAKE_TOKEN + " tail"}
     mock.download = lambda _r: httpx.Response(200, json=payload)
     with pytest.raises(m.MoodleError) as info:
         m.download_file(_url())
-    assert len(str(info.value)) <= 200
+    head, _, rest = str(info.value).partition(": ")
+    assert head == "Moodle refused the download"
+    assert unwrap(rest) == ("moodle.error", ("A" * start + "*** tail")[:300])
     for i in range(len(FAKE_TOKEN) - 5):
         assert FAKE_TOKEN[i : i + 6] not in str(info.value)
 

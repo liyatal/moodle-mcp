@@ -226,6 +226,10 @@ mkdir -p ~/.claude/skills && cp -r skills/moodle ~/.claude/skills/
 - ב-`--login` הסיסמה עוברת רק ל-Moodle של המוסד ולא נשמרת. המפתח שחוזר נבדק לפני שהוא נשמר.
 - ה-token נשלח רק לשרת ה-Moodle שהוגדר, ורק בגוף הבקשה (POST), לא בכתובת. כך הוא לא נכנס ללוגים ולא להודעות שגיאה. הורדה מכל כתובת אחרת, או מכתובת שאינה `webservice/pluginfile.php`, נחסמת.
 - לפני שה-token נשלח בפעם הראשונה השרת שואל את Moodle (בלי token) מי הוא, ומסרב אם האתר לא מזדהה כמוסד שהוגדרת. זה תופס שגיאות הקלדה וכתובות שהוחלפו.
+- השרת קורא רק לרשימה סגורה של פונקציות קריאה של Moodle (`READ_FUNCTIONS` בקוד), והבדיקה נעשית לפני כל בקשה. כלי חדש חייב להוסיף את הפונקציה שלו לרשימה, ולכן זה גלוי ב-diff. שימו לב: זה מגביל את **השרת**, לא את ה-token: ל-token עצמו יש ב-Moodle הרשאות רחבות יותר (כמו הגשת מטלות ופרסום בפורום).
+- כל טקסט שנכתב על ידי אחרים ב-Moodle (שמות קורסים וקבצים, הודעות בפורומים, תיאורי מטלות, התראות) מוחזר עטוף ב-`<untrusted_moodle_content source="...">`, ומוסרים ממנו טקסט נסתר (HTML מוסתר, תווים בלתי נראים). השרת מורה למודל להתייחס אליו כמידע ולא כהוראות, כדי להקשות על prompt injection (למשל פוסט שמנסה להפעיל כלים). זה מקשה אבל לא מבטל את הסיכון; הרשימה הסגורה למעלה מגבילה את הנזק גם אם המודל בכל זאת יתפתה.
+- הכלים בודקים את הפרמטרים לפני כל בקשה (מספרים חיוביים, טווחי ימים, אורך טקסט), ותשובה לא צפויה מ-Moodle נותנת ערך ריק במקום קריסה.
+- `python moodle_mcp.py --doctor` בודק את ההתקנה (כתובת, token, זהות האתר) ומציג אילו פונקציות כתיבה ה-token שלכם מחזיק. הוא לא מדפיס את ה-token ולא נתונים אישיים.
 - `MOODLE_URL` חייב להתחיל ב-`https://` (`http://` רק ל-localhost), בלי שם משתמש/סיסמה בכתובת.
 - הורדות לא יכולות לצאת מתיקיית ההורדות: שמות קבצים ותיקיות מנוקים (גם שמות שמורים של Windows כמו `CON`), יש הגבלת גודל וזמן, ואין מעקב אחרי הפניות.
 - הטסטים רצים בלי רשת ובלי token אמיתי: `pip install -r requirements-dev.txt` ואז `python -m pytest`.
@@ -293,6 +297,10 @@ All 37 sites were checked to be live Moodle sites (November 2026), but only TAU 
 - Your token is as sensitive as a password for reading your Moodle. Don't commit it or paste it into a chat.
 - The token is sent only to the configured Moodle host, and only in the POST body, never in a URL, so it can't end up in logs or error messages. Downloads from any other host, or from anything but `webservice/pluginfile.php`, are refused.
 - Before the token is first sent, the server asks the site (without the token) who it is, and refuses if it doesn't identify itself as the host you configured. That catches typos and hosts that changed hands.
+- The server only calls a closed list of read-only Moodle functions (`READ_FUNCTIONS` in the code), checked before every request. A new tool has to add its function to that list, so it shows up in the diff. Note that this limits the **server**, not your token: the token itself can do more in Moodle (submit assignments, post in forums).
+- Text written by other people in Moodle (course and file names, forum posts, assignment descriptions, notifications) is returned wrapped in `<untrusted_moodle_content source="...">`, with hidden content (hidden HTML, invisible characters) removed. The server tells the assistant to treat it as data, not instructions, which makes prompt injection harder (for example a post that tries to make the assistant call tools). That reduces the risk but does not remove it; the closed list above limits the damage even if the assistant is tempted.
+- Tools validate their arguments before any request (positive ids, day ranges, text length), and an unexpected reply from Moodle yields an empty value instead of a crash.
+- `python moodle_mcp.py --doctor` checks your setup (URL, token, site identity) and lists the write functions your token holds. It prints no token and no personal data.
 - `MOODLE_URL` must be `https://` (`http://` only for localhost) and contain no user name or password.
 - Downloads can't leave the download folder: file and folder names are sanitized (including Windows device names like `CON`), there is a size and time limit, and redirects are never followed.
 - Tests run offline with no real token: `pip install -r requirements-dev.txt && python -m pytest`.

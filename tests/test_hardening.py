@@ -120,14 +120,21 @@ def test_moodle_safety_source_has_no_network_environment_or_printing():
             imported |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom):
             imported.add((node.module or "").split(".")[0])
-    assert imported <= {"ipaddress", "re", "unicodedata", "urllib"}, imported
+    assert imported <= {"html", "ipaddress", "re", "unicodedata", "urllib"}, imported
     calls = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert not calls & {"print", "open", "input", "exec", "eval", "__import__"}, calls
     assert "environ" not in {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
 
 
 def test_moodle_mcp_reexports_the_safety_helpers(m):
-    for name in ("validate_base_url", "check_download_url", "safe_filename", "safe_subfolder"):
+    for name in (
+        "validate_base_url",
+        "check_download_url",
+        "safe_filename",
+        "safe_subfolder",
+        "html_to_text",
+        "untrusted",
+    ):
         assert getattr(m, name) is getattr(moodle_safety, name), name
 
 

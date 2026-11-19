@@ -16,7 +16,9 @@ from support import (
     TAU_URL,
     assert_inside,
     assert_no_leak,
+    fenced,
     files_under,
+    unwrap,
 )
 
 COURSE = {"id": 7, "fullname": "Algorithms: Intro/2026", "shortname": "ALG", "enddate": 0}
@@ -268,7 +270,7 @@ def test_files_over_max_mb_are_listed_and_never_requested(mock, m, dl_dir):
     served = {f"{PLUGINFILE}3/ok.pdf": b"ok", f"{PLUGINFILE}2/edge.bin": b"e"}
     setup_course(mock, sections, served)
     out = m.download_course(7)
-    assert out["too_large"] == [{"filename": "huge.iso", "mb": 300}]
+    assert out["too_large"] == [{"filename": fenced("huge.iso", "file.name"), "mb": 300}]
     assert posix(out["downloaded"]) == ["W/edge.bin", "W/ok.pdf"], "exactly max_mb is allowed"
     assert {r.url.path.rsplit("/", 1)[-1] for r in mock.download_requests()} == {"edge.bin", "ok.pdf"}
 
@@ -276,7 +278,7 @@ def test_files_over_max_mb_are_listed_and_never_requested(mock, m, dl_dir):
 def test_max_mb_is_a_per_call_limit(course, mock):
     sections = [{"id": 1, "name": "W", "modules": [mod(1, "B", "resource", entry("b.bin", "1/b.bin", size=2 * MB))]}]
     mock.on("core_course_get_contents", sections)
-    assert course.download_course(7, max_mb=1)["too_large"] == [{"filename": "b.bin", "mb": 2}]
+    assert course.download_course(7, max_mb=1)["too_large"] == [{"filename": fenced("b.bin", "file.name"), "mb": 2}]
     assert mock.download_requests() == []
 
 
@@ -289,8 +291,8 @@ def test_a_file_that_is_bigger_than_its_listing_claims_is_stopped_by_the_limit(
     setup_course(mock, sections, {f"{PLUGINFILE}1/b.bin": b"x" * (2 * MB)})
     out = m.download_course(7, max_mb=max_mb)
     assert out["downloaded"] == [] and out["bytes"] == 0
-    assert [e["filename"] for e in out["failed"]] == ["b.bin"]
-    assert "1 MB download limit" in out["failed"][0]["error"]
+    assert [unwrap(e["filename"]) for e in out["failed"]] == [("file.name", "b.bin")]
+    assert "1 MB download limit" in unwrap(out["failed"][0]["error"])[1]
     assert files_under(dl_dir) == []
 
 
@@ -376,7 +378,7 @@ def test_failed_files_are_reported_with_short_safe_messages_and_do_not_stop_the_
     setup_course(mock, sections, served)
     out = m.download_course(7)
     assert posix(out["downloaded"]) == ["W/ok.pdf", "W/last.pdf"]
-    errors = {e["filename"]: e["error"] for e in out["failed"]}
+    errors = {unwrap(e["filename"])[1]: unwrap(e["error"])[1] for e in out["failed"]}
     assert list(errors) == ["gone.pdf", "net.pdf", "tok.pdf", "evil.pdf"]
     assert errors["gone.pdf"] == "Moodle answered HTTP 404 for this file"
     assert errors["net.pdf"] == "Download failed: ReadError"

@@ -19,7 +19,9 @@ from support import (
     TOOLS,
     assert_no_token,
     courses,
+    fenced,
     stamp,
+    unwrap,
 )
 
 
@@ -35,7 +37,7 @@ NOTIFICATIONS = {
             "read": False,
             "eventtype": "grade",
             "fullmessagehtml": "<p>You got <b>95</b></p>",
-            "contexturl": "u",
+            "contexturl": f"{TAU_URL}/mod/assign/view.php?id=5",
         },
         {"subject": "Old", "timecreated": NOW - DAY, "read": True, "fullmessage": "plain text"},
         {"subject": "Short", "read": False, "smallmessage": "tiny"},
@@ -47,26 +49,28 @@ def test_notifications_shape_and_request(m, mock):
     mock.on("message_popup_get_popup_notifications", NOTIFICATIONS)
     out = m.notifications(limit=5)
     assert out["unread_count"] == 2
-    assert [(n["subject"], n["read"], n["text"]) for n in out["notifications"]] == [
+    assert [(unwrap(n["subject"])[1], n["read"], unwrap(n["text"])[1]) for n in out["notifications"]] == [
         ("Graded", False, "You got 95"),
         ("Old", True, "plain text"),
         ("Short", False, "tiny"),
     ]
     assert out["notifications"][0] == {
-        "subject": "Graded",
+        "subject": fenced("Graded", "notification.subject"),
         "received": stamp(NOW),
         "read": False,
         "kind": "grade",
-        "text": "You got 95",
-        "url": "u",
+        "text": fenced("You got 95", "notification.text"),
+        "url": f"{TAU_URL}/mod/assign/view.php?id=5",
     }
+    assert out["notifications"][2]["url"] is None, "a notification without a link has none"
     (fields,) = mock.forms_for("message_popup_get_popup_notifications")
     assert (fields["useridto"], fields["newestfirst"], fields["limit"]) == ("42", "1", "5")
 
 
 def test_notifications_unread_only(m, mock):
     mock.on("message_popup_get_popup_notifications", NOTIFICATIONS)
-    assert [n["subject"] for n in m.notifications(unread_only=True)["notifications"]] == ["Graded", "Short"]
+    out = m.notifications(unread_only=True)["notifications"]
+    assert [unwrap(n["subject"])[1] for n in out] == ["Graded", "Short"]
 
 
 @pytest.mark.parametrize(("asked", "sent"), [(500, "100"), (100, "100"), (1, "1"), (0, "1"), (-5, "1")])
@@ -100,15 +104,15 @@ def test_calendar_events_sorted_with_course_names(m, mock):
         },
     )
     out = m.calendar_events(days=10)
-    assert [e["name"] for e in out] == ["Mine", "Lecture", "Exam"]
+    assert [unwrap(e["name"])[1] for e in out] == ["Mine", "Lecture", "Exam"]
     assert out[2] == {
-        "name": "Exam",
-        "course": "Algorithms",
+        "name": fenced("Exam", "event.name"),
+        "course": fenced("Algorithms", "course.name"),
         "type": "course",
         "activity": None,
         "start": stamp(NOW + 2 * DAY),
         "end": stamp(NOW + 2 * DAY + 3600),
-        "description": "Bring ID",
+        "description": fenced("Bring ID", "event.description"),
     }
     assert out[1]["end"] is None and out[0]["course"] is None and out[0]["activity"] == "assign"
     (fields,) = mock.forms_for("core_calendar_get_calendar_events")
@@ -135,32 +139,38 @@ def _whats_new_site(mock):
                         "id": 11,
                         "name": "Slides",
                         "modname": "resource",
-                        "url": "u11",
+                        "url": f"{TAU_URL}/mod/x/view.php?id=11",
                         "contents": [_new_file("new.pdf", NOW - 100), _new_file("old.pdf", NOW - 30 * DAY)],
                     },
                     {
                         "id": 12,
                         "name": "Exercises",
                         "modname": "folder",
-                        "url": "u12",
+                        "url": f"{TAU_URL}/mod/x/view.php?id=12",
                         "contents": [_new_file("ex.pdf", NOW - 50)],
                     },
                     {
                         "id": 13,
                         "name": "Wiki",
                         "modname": "wiki",
-                        "url": "u13",
+                        "url": f"{TAU_URL}/mod/x/view.php?id=13",
                         "contents": [_new_file("w.html", NOW - 200)],
                     },
-                    {"id": 14, "name": "Page", "modname": "page", "url": "u14", "contents": []},
+                    {
+                        "id": 14,
+                        "name": "Page",
+                        "modname": "page",
+                        "url": f"{TAU_URL}/mod/x/view.php?id=14",
+                        "contents": [],
+                    },
                     {
                         "id": 15,
                         "name": "Old stuff",
                         "modname": "resource",
-                        "url": "u15",
+                        "url": f"{TAU_URL}/mod/x/view.php?id=15",
                         "contents": [_new_file("o.pdf", NOW - 30 * DAY)],
                     },
-                    {"id": 16, "name": "News", "modname": "forum", "url": "u16"},
+                    {"id": 16, "name": "News", "modname": "forum", "url": f"{TAU_URL}/mod/x/view.php?id=16"},
                     {"id": 17, "name": "Label", "modname": "label"},
                 ],
             }
@@ -222,35 +232,37 @@ def test_whats_new_collects_files_assignments_forum_posts_and_other_changes(m, m
     out = m.whats_new(days=7)
     assert set(out) == {"since", "files", "assignments", "forum_posts", "other_changes"}
     assert re.fullmatch(r"\d\d/\d\d/\d{4} \d\d:\d\d", out["since"])
-    assert [(f["name"], f["type"]) for f in out["files"]] == [
+    assert [(unwrap(f["name"])[1], f["type"]) for f in out["files"]] == [
         ("Exercises", "folder"),
         ("Slides", "resource"),
         ("Wiki", "wiki"),
     ]
     slides = out["files"][1]
-    assert slides["files"] == [{"filename": "new.pdf", "fileurl": f"{TAU_URL}{PLUGINFILE}1/new.pdf"}], (
-        "only the new file"
-    )
-    assert out["files"][2]["url"] == "u13" and "files" not in out["files"][2]
-    assert slides["course"] == "Algorithms" and slides["course_id"] == 7 and slides["section"] == "Week 1"
+    assert slides["files"] == [
+        {"filename": fenced("new.pdf", "file.name"), "fileurl": f"{TAU_URL}{PLUGINFILE}1/new.pdf"}
+    ], "only the new file"
+    assert out["files"][2]["url"] == f"{TAU_URL}/mod/x/view.php?id=13" and "files" not in out["files"][2]
+    assert slides["course"] == fenced("Algorithms", "course.name") and slides["course_id"] == 7
+    assert slides["section"] == fenced("Week 1", "section.name")
     assert out["other_changes"] == [
         {
-            "course": "Algorithms",
+            "course": fenced("Algorithms", "course.name"),
             "course_id": 7,
-            "section": "Week 1",
-            "name": "Page",
+            "section": fenced("Week 1", "section.name"),
+            "name": fenced("Page", "module.name"),
             "type": "page",
-            "url": "u14",
+            "url": f"{TAU_URL}/mod/x/view.php?id=14",
             "changed": ["configuration", "contentfiles"],
         }
     ]
-    assert [a["name"] for a in out["assignments"]] == ["HW1"] and out["assignments"][0]["course"] == "Algorithms"
+    assert [unwrap(a["name"])[1] for a in out["assignments"]] == ["HW1"]
+    assert out["assignments"][0]["course"] == fenced("Algorithms", "course.name")
     (post,) = out["forum_posts"]
     assert (post["subject"], post["preview"], post["last_post_by"], post["course"]) == (
-        "Exam date",
-        "See site",
-        "TA",
-        "Algorithms",
+        fenced("Exam date", "forum.subject"),
+        fenced("See site", "post.message"),
+        fenced("TA", "forum.author"),
+        fenced("Algorithms", "course.name"),
     )
     assert not any("_ts" in row for rows in (out["files"], out["assignments"], out["forum_posts"]) for row in rows)
     assert "errors" not in out
@@ -281,7 +293,7 @@ def test_whats_new_survives_a_course_whose_update_list_or_forums_cannot_be_read(
         {"exception": "moodle_exception", "errorcode": "nopermission", "message": "x"},
     )
     out = m.whats_new()
-    assert [f["name"] for f in out["files"]] == ["Exercises", "Slides", "Wiki"]
+    assert [unwrap(f["name"])[1] for f in out["files"]] == ["Exercises", "Slides", "Wiki"]
     assert out["other_changes"] == [] and out["forum_posts"] == []
     assert "errors" not in out, "an unreadable forum or update list is not news, and not an error"
 
@@ -294,7 +306,8 @@ def test_whats_new_reports_failures_without_the_token(m, mock):
     mock.on("mod_forum_get_forums_by_courses", boom)
     out = m.whats_new()
     assert len(out["errors"]) == 3
-    assert [e.split(":")[0] for e in out["errors"]] == ["Algorithms", "assignments", "forums"]
+    assert {unwrap(e)[0] for e in out["errors"]} == {"error"}, "errors carry Moodle's text, so they are fenced"
+    assert [unwrap(e)[1].split(":")[0] for e in out["errors"]] == ["Algorithms", "assignments", "forums"]
     for error in out["errors"]:
         assert_no_token(error)
         assert "ABC123456789" not in error
