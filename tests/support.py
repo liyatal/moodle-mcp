@@ -268,3 +268,19 @@ def stamp(ts: int) -> str:
 
 def courses(mock: MoodleMock, *extra: dict) -> None:
     mock.on("core_enrol_get_users_courses", [ALG, *extra])
+
+
+# ---- third-party text comes back fenced (moodle_safety.untrusted) -------------------------------------
+FENCE_RE = re.compile(r'<untrusted_moodle_content source="([a-z_.]{1,40})">(.*)</untrusted_moodle_content>', re.DOTALL)
+
+
+def fenced(text: str, source: str) -> str:
+    """The exact wrapper a tool puts around `text` (already clean) for the label `source`."""
+    return f'<untrusted_moodle_content source="{source}">{text}</untrusted_moodle_content>'
+
+
+def unwrap(value: Any) -> tuple[str, str]:
+    """(source, text) of a fenced string; fails if `value` is anything else."""
+    match = FENCE_RE.fullmatch(value) if isinstance(value, str) else None
+    assert match, f"not a fenced value: {value!r}"
+    return match.group(1), match.group(2)

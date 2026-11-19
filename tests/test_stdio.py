@@ -84,7 +84,7 @@ def test_handshake_works_without_a_token(no_token):
     assert init.serverInfo.name == "moodle"
     assert init.protocolVersion
     assert init.capabilities.tools is not None
-    assert init.instructions is None or isinstance(init.instructions, str)
+    assert "untrusted_moodle_content" in (init.instructions or ""), "the model is told what the fence means"
 
 
 def test_the_server_advertises_exactly_the_fourteen_tools(no_token):
